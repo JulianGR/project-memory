@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, utimes, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
@@ -116,27 +116,38 @@ test('recordPrompt treats equivalent Windows project paths as one counter', asyn
   assert.equal((await recordPrompt({ host: 'claude', event: { ...event, cwd: relativeRoot.split(sep).join('\\') }, stateRoot, interval: 3 })).count, 3)
 })
 
-test('recordPrompt serializes concurrent updates and preserves reminder cadence', async () => {
+test('prompt processes retain every increment with a stale state artifact and claim each due interval once', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
   const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const event = { cwd: 'C:\\work\\project', session_id: 's1' }
-  const results = await Promise.all(Array.from({ length: 20 }, () => recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })))
-  const files = await readdir(stateRoot)
-  const state = JSON.parse(await readFile(join(stateRoot, files.find((file) => file.endsWith('.json'))), 'utf8'))
+  const environment = { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '4' }
+  const event = { cwd: root, session_id: 's1' }
 
-  assert.deepEqual(results.map((result) => result.count).sort((left, right) => left - right), Array.from({ length: 20 }, (_, index) => index + 1))
-  assert.equal(results.filter((result) => result.due).length, 5)
-  assert.equal(state.count, 20)
+  await runCli(['init'], event, environment)
+  await runCli(['prompt', '--host', 'claude'], event, environment)
+  const [eventDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.events'))
+  const staleStateFile = join(stateRoot, `${eventDirectory.slice(0, -'.events'.length)}.json`)
+  await writeFile(staleStateFile, '{"count":1}', 'utf8')
+  const stale = new Date(Date.now() - 60000)
+  await utimes(staleStateFile, stale, stale)
+
+  const results = await Promise.all(Array.from({ length: 20 }, () => runCli(['prompt', '--host', 'claude'], event, environment)))
+
+  assert.ok(results.every((result) => result.code === 0 && result.errors === ''))
+  assert.equal((await readdir(join(stateRoot, eventDirectory))).filter((file) => file.endsWith('.event')).length, 21)
+  assert.equal(results.filter((result) => result.output === `${reminder}\n`).length, 5)
+  const [dueDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.due'))
+  assert.deepEqual((await readdir(join(stateRoot, dueDirectory))).sort(), ['4-1.due', '4-2.due', '4-3.due', '4-4.due', '4-5.due'])
 })
 
-test('recordPrompt recovers from malformed state without preserving a partial counter', async () => {
+test('recordPrompt preserves event records when a stale state artifact is malformed', async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
   const event = { cwd: 'C:\\work\\project', session_id: 's1' }
   await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })
-  const [file] = await readdir(stateRoot)
-  await writeFile(join(stateRoot, file), '{', 'utf8')
+  const [eventDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.events'))
+  await writeFile(join(stateRoot, `${eventDirectory.slice(0, -'.events'.length)}.json`), '{', 'utf8')
 
-  assert.deepEqual(await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 }), { count: 1, due: false, interval: 4 })
-  assert.deepEqual(JSON.parse(await readFile(join(stateRoot, file), 'utf8')), { count: 1 })
+  assert.deepEqual(await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 }), { count: 2, due: false, interval: 4 })
+  assert.equal((await readdir(join(stateRoot, eventDirectory))).length, 2)
 })
 
 test('recordPrompt rejects missing required hook fields', async () => {

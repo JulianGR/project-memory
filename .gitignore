@@ -8,3 +8,4 @@ Thumbs.db
 # Runtime state (should never live here, just in case)
 state/
 *.count
+.superpowers/sdd/
