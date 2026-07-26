@@ -1,104 +1,109 @@
-# auto-update-claude-md
+# Project Memory
 
-Hooks for **Claude Code** that keep each project's memory fresh on a **fixed
-cadence**, built on top of the native _Auto Memory_.
+Project Memory keeps a short, durable handoff document for serious coding
+projects. It supports Claude Code, Codex Desktop, and Kimi Code CLI on Windows,
+macOS, and Linux. It requires Node.js 20 or later and has no dependencies.
 
-It does two things:
+It is not supported by ChatGPT Web. Kimi Code VS Code support is experimental.
 
-1. **On session start**, if the project has **no `CLAUDE.md`**, it asks Claude to
-   create a concise one.
-2. **Every N messages** (5 by default), it makes Claude flush what it has learned
-   into its `memory/` folder + `MEMORY.md` (and into `CLAUDE.md` for stable
-   conventions) — **only if there is something durable** worth remembering.
+## What it creates
 
-> **Why a hook and not just a skill?** A skill is _on-demand_: Claude does not
-> count messages or self-trigger deterministically. Automatic cadence is only
-> possible with **hooks**, whose `stdout` (for `SessionStart` and
-> `UserPromptSubmit`) is injected as context and can instruct Claude.
+Initialize a project once:
 
----
+```text
+node bin/project-memory.mjs init
+```
 
-## How it works
+The command creates these files without overwriting existing ones:
 
-| Hook | Fires | What it does |
-|------|-------|--------------|
-| `SessionStart` | When a session opens/resumes | If `CLAUDE.md` is missing, suggests creating it |
-| `UserPromptSubmit` | On every user message | Counts; every N, injects the "update memory" instruction |
+- `STATUS.md` is the durable project handoff memory, not a transcript.
+- `AGENTS.md` and `CLAUDE.md` are identical pointers that tell agents to read
+  `STATUS.md` before work and write only durable facts.
 
-- The **counter** lives in `~/.claude/state/auto-update-claude-md/<project>.count`
-  (outside your repos — it never pollutes git).
-- The **frequency** is controlled by `AUTO_UPDATE_CLAUDE_N` (default `5`).
+The prompt hook is inactive until `STATUS.md` exists. Every four user prompts by
+default, it checks whether the agent should update durable memory. It stores its
+per-session counter outside the project under the user's home directory.
 
-This **does not replace** Auto Memory (which writes opportunistically) or Auto
-Dream (which consolidates every 24h): it **complements** them by forcing a review
-on a fixed rhythm.
+## Install
 
----
+### Codex Desktop
 
-## Install A — as a plugin (recommended, fully additive)
+Add the repository marketplace, then install the plugin:
 
-Plugin hooks are **merged** with your existing configuration by Claude Code — they
-do **not** modify or replace your `settings.json`.
+```text
+codex plugin marketplace add JulianGR/auto-update-claude-md
+codex plugin add auto-update-claude-md@auto-update-claude-md
+```
 
-In a `claude` terminal:
+Codex Desktop shares this local plugin configuration. Restart or open a new task
+after installation. Codex shows a visible checkpoint through its hook output;
+the semantic rule remains the project's `AGENTS.md`.
+
+### Claude Desktop and Claude Code
+
+In a Claude Code session, add the repository marketplace and install the root
+plugin package:
 
 ```text
 /plugin marketplace add JulianGR/auto-update-claude-md
 /plugin install auto-update-claude-md@auto-update-claude-md
 ```
 
-Restart the session. Done — it applies to all your projects.
+Restart the session after installation. Claude receives the cadence reminder as
+prompt context and follows the project's `CLAUDE.md` pointer.
 
-## Install B — manual (additive script)
+### Kimi Code CLI
 
-The included `install.sh` only **adds** its hooks to your `~/.claude/settings.json`
-and preserves everything else. It is **idempotent** (safe to re-run).
+From an interactive Kimi Code CLI session, install the repository root and then
+reload plugins:
 
-```bash
-git clone https://github.com/JulianGR/auto-update-claude-md.git
-cd auto-update-claude-md
-bash install.sh
+```text
+/plugins install https://github.com/JulianGR/auto-update-claude-md
+/plugins reload
 ```
 
-> Requires `bash`. On Windows, run it from Git Bash (the one bundled with Claude
-> Code works). If `jq` is installed, the merge is automatic; otherwise the script
-> prints the exact `hooks` block for you to merge by hand (never replace the file).
+Kimi CLI receives cadence context from its plugin hooks and uses `AGENTS.md`.
+Kimi Code VS Code may load the same project instructions, but hook execution has
+not been confirmed and remains experimental.
 
----
+## Cadence configuration
 
-## Configuration
+Set `AGENT_MEMORY_INTERVAL` to a positive integer in the host environment. The
+default is `4`. `AUTO_UPDATE_CLAUDE_N` remains a backward-compatible fallback.
 
-Change the cadence **without editing the script** by setting the env var in
-`settings.json`:
-
-```json
-{ "env": { "AUTO_UPDATE_CLAUDE_N": "8" } }
+```text
+AGENT_MEMORY_INTERVAL=8
 ```
 
-Guide: `3` aggressive · `5` recommended · `8-10` relaxed.
+On Windows, set this environment variable through the terminal or the host's
+environment settings before starting the host. On macOS and Linux, export it
+from the shell or configure it in the host's launch environment.
 
----
+## Native limitations
 
-## Management skill
+- Claude Code and Kimi CLI can attach the periodic reminder to the agent's
+  prompt context.
+- Codex Desktop exposes the checkpoint as a visible system message. It does not
+  guarantee a semantic memory update, so `AGENTS.md` is the durable rule.
+- No desktop application is a wrapper around its CLI. Install and behavior are
+  documented separately above.
+- ChatGPT Web has no local project hooks and is not supported.
 
-The plugin ships an `auto-update-claude-md` skill so you can ask Claude things like:
+## Verify
 
-- "what's the memory counter at?"
-- "change the cadence to 8"
-- "force a memory flush now"
-- "reset the counter" / "disable the cadence"
+Run these commands from the repository root on Windows, macOS, or Linux:
 
----
+```text
+node --test tests/*.test.mjs
+python C:/Users/jules/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
+node bin/project-memory.mjs init
+node bin/project-memory.mjs status
+```
 
-## Requirements & notes
-
-- **`bash`** must be available for the hooks. On Windows it works with the Git Bash
-  that ships with Claude Code (tested on the desktop app, Windows 11).
-- Built for Claude Code **v2.1.59+** (native Auto Memory) and later.
-- Conservative by design: if there is nothing new, it **writes nothing**.
-
----
+Use the absolute validator path appropriate to your Codex installation. The
+first two commands validate the package. The final two initialize and inspect a
+test project.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

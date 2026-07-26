@@ -3,15 +3,13 @@
   "owner": {
     "name": "JulianGR"
   },
-  "metadata": {
-    "description": "Keep each project's Claude Code memory fresh automatically.",
-    "version": "1.0.0"
-  },
+  "description": "Cross-agent project memory for Claude Code, Codex, and Kimi.",
   "plugins": [
     {
       "name": "auto-update-claude-md",
-      "source": "./plugins/auto-update-claude-md",
-      "description": "Force a memory review every N messages and propose creating CLAUDE.md when missing."
+      "source": "./",
+      "description": "Initialize durable project memory and remind agents to review it on a configurable cadence.",
+      "category": "productivity"
     }
   ]
 }

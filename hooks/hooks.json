@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-update-claude-md.sh\" sessionstart"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" session-start --host codex"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/auto-update-claude-md.sh\" cadence"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" prompt --host codex"
           }
         ]
       }

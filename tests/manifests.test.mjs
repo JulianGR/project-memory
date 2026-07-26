@@ -1,0 +1,61 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { access, readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+async function readJson(path) {
+  return JSON.parse(await readFile(join(projectRoot, path), 'utf8'))
+}
+
+test('root package provides every host manifest', async () => {
+  await Promise.all([
+    access(join(projectRoot, '.claude-plugin', 'plugin.json')),
+    access(join(projectRoot, '.codex-plugin', 'plugin.json')),
+    access(join(projectRoot, '.agents', 'plugins', 'marketplace.json')),
+    access(join(projectRoot, 'hooks', 'hooks.json')),
+    access(join(projectRoot, 'kimi.plugin.json'))
+  ])
+})
+
+test('Claude marketplace installs the repository root', async () => {
+  const marketplace = await readJson('.claude-plugin/marketplace.json')
+  assert.equal(marketplace.plugins[0].source, './')
+})
+
+test('Claude manifest registers Claude lifecycle hooks', async () => {
+  const manifest = await readJson('.claude-plugin/plugin.json')
+  assert.equal(manifest.name, 'auto-update-claude-md')
+  assert.equal(manifest.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host claude')
+  assert.equal(manifest.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host claude')
+})
+
+test('Codex manifest exposes default-discovered Codex hooks', async () => {
+  const manifest = await readJson('.codex-plugin/plugin.json')
+  const hooks = await readJson('hooks/hooks.json')
+  assert.equal(manifest.name, 'auto-update-claude-md')
+  assert.equal(manifest.hooks, undefined)
+  assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host codex')
+  assert.equal(hooks.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host codex')
+})
+
+test('Kimi manifest declares the two lifecycle hooks', async () => {
+  const manifest = await readJson('kimi.plugin.json')
+  assert.equal(manifest.skills, './skills/')
+  assert.deepEqual(manifest.hooks.map(({ event }) => event), ['SessionStart', 'UserPromptSubmit'])
+  assert.deepEqual(manifest.hooks.map(({ command }) => command), [
+    'node ./bin/project-memory.mjs session-start --host kimi',
+    'node ./bin/project-memory.mjs prompt --host kimi'
+  ])
+  assert.ok(manifest.hooks.every(({ timeout }) => Number.isInteger(timeout) && timeout > 0))
+})
+
+test('Codex marketplace installs the repository root with policy metadata', async () => {
+  const marketplace = await readJson('.agents/plugins/marketplace.json')
+  const plugin = marketplace.plugins[0]
+  assert.deepEqual(plugin.source, { source: 'local', path: './' })
+  assert.deepEqual(plugin.policy, { installation: 'AVAILABLE', authentication: 'ON_INSTALL' })
+  assert.equal(plugin.category, 'Productivity')
+})

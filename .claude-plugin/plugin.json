@@ -1,0 +1,37 @@
+{
+  "name": "auto-update-claude-md",
+  "displayName": "Project Memory",
+  "version": "1.0.0",
+  "description": "Durable project memory with configurable reminders for Claude Code.",
+  "author": {
+    "name": "JulianGR",
+    "url": "https://github.com/JulianGR"
+  },
+  "homepage": "https://github.com/JulianGR/auto-update-claude-md",
+  "repository": "https://github.com/JulianGR/auto-update-claude-md",
+  "license": "MIT",
+  "keywords": ["memory", "handoff", "project-context"],
+  "skills": "./skills/",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" session-start --host claude"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" prompt --host claude"
+          }
+        ]
+      }
+    ]
+  }
+}
