@@ -1,5 +1,7 @@
 import { initializeProject, isInitialized, recordPrompt, formatReminder, resolveInterval, stateRootFor } from '../lib/project-memory.mjs'
 
+const initializationMarker = 'agent-memory:init'
+
 function hostFrom(args) {
   const hostIndex = args.indexOf('--host')
   if (hostIndex >= 0) return args[hostIndex + 1] || 'claude'
@@ -11,6 +13,15 @@ async function eventFromInput() {
   let input = ''
   for await (const chunk of process.stdin) input += chunk
   return input.trim() ? JSON.parse(input) : {}
+}
+
+function isInitializationMarker(event) {
+  return ['prompt', 'user_prompt', 'userPrompt', 'message', 'input'].some((key) => typeof event[key] === 'string' && event[key].toLowerCase() === initializationMarker)
+}
+
+function formatInitialization(host) {
+  const message = 'Project memory initialized.'
+  return host === 'codex' ? JSON.stringify({ systemMessage: message }) : message
 }
 
 async function main() {
@@ -32,6 +43,12 @@ async function main() {
 
     if (command === 'status') {
       process.stdout.write(`${JSON.stringify({ initialized: await isInitialized(root) })}\n`)
+      return
+    }
+
+    if (isInitializationMarker(event)) {
+      await initializeProject(root)
+      process.stdout.write(`${formatInitialization(host)}\n`)
       return
     }
 

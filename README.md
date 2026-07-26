@@ -8,13 +8,14 @@ It is not supported by ChatGPT Web. Kimi Code VS Code support is experimental.
 
 ## What it creates
 
-Initialize a project once:
+In the target project, send this exact standalone message once through Claude,
+Codex, or Kimi:
 
 ```text
-node bin/project-memory.mjs init
+agent-memory:init
 ```
 
-The command creates these files without overwriting existing ones:
+The installed prompt hook creates these files without overwriting existing ones:
 
 - `STATUS.md` is the durable project handoff memory, not a transcript.
 - `AGENTS.md` and `CLAUDE.md` are identical pointers that tell agents to read
@@ -91,18 +92,18 @@ from the shell or configure it in the host's launch environment.
 
 ## Verify
 
-Run these commands from the repository root on Windows, macOS, or Linux:
+For plugin contributors, run these from the plugin checkout on Windows, macOS,
+or Linux:
 
 ```text
 node --test tests/*.test.mjs
-python C:/Users/jules/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py .
 node bin/project-memory.mjs init
 node bin/project-memory.mjs status
 ```
 
-Use the absolute validator path appropriate to your Codex installation. The
-first two commands validate the package. The final two initialize and inspect a
-test project.
+Run the Codex `validate_plugin.py .` command from your Codex plugin developer
+tooling if it is installed. The direct binary commands are checkout diagnostics;
+installed users initialize a project by sending `agent-memory:init`.
 
 ## License
 

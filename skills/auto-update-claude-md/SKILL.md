@@ -5,8 +5,9 @@ description: Initialize and maintain concise, durable project memory for Claude,
 
 # Project memory
 
-Run `node bin/project-memory.mjs init` once for a project that should keep
-durable memory. This creates `STATUS.md`, `AGENTS.md`, and `CLAUDE.md` without
+For a project that should keep durable memory, send the exact standalone
+message `agent-memory:init` once through Claude, Codex, or Kimi. The installed
+prompt hook creates `STATUS.md`, `AGENTS.md`, and `CLAUDE.md` without
 overwriting existing files.
 
 `AGENTS.md` and `CLAUDE.md` are identical pointers to the same operating rule.

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, sep } from 'node:path'
@@ -45,6 +45,24 @@ function runCliInput(args, input, environment = {}) {
     child.on('error', reject)
     child.on('close', (code) => resolve({ code, output, errors }))
     child.stdin.end(input)
+  })
+}
+
+function runCliAt(binary, cwd, args, event, environment = {}) {
+  const { AGENT_MEMORY_HOME, AGENT_MEMORY_INTERVAL, AUTO_UPDATE_CLAUDE_N, ...baseEnvironment } = process.env
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [binary, ...args], {
+      cwd,
+      env: { ...baseEnvironment, ...environment },
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    let output = ''
+    let errors = ''
+    child.stdout.on('data', (chunk) => { output += chunk })
+    child.stderr.on('data', (chunk) => { errors += chunk })
+    child.on('error', reject)
+    child.on('close', (code) => resolve({ code, output, errors }))
+    child.stdin.end(JSON.stringify(event))
   })
 }
 
@@ -193,6 +211,64 @@ test('formatReminder uses host-appropriate output', () => {
   assert.deepEqual(JSON.parse(formatReminder('codex', { count: 4, interval: 4 })), { systemMessage: reminder })
   assert.equal(formatReminder('claude', { count: 4, interval: 4 }), reminder)
   assert.equal(formatReminder('kimi', { count: 4, interval: 4 }), reminder)
+})
+
+test('prompt marker initializes only exact host payload variants', async () => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
+  const cases = [
+    { host: 'claude', event: { prompt: 'AGENT-MEMORY:INIT' }, output: 'Project memory initialized.\n' },
+    { host: 'codex', event: { user_prompt: 'agent-memory:init' }, output: '{"systemMessage":"Project memory initialized."}\n' },
+    { host: 'kimi', event: { userPrompt: 'agent-memory:init' }, output: 'Project memory initialized.\n' }
+  ]
+
+  for (const { host, event, output } of cases) {
+    const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
+    const result = await runCli(['prompt', '--host', host], { cwd: root, session_id: `${host}-session`, ...event }, { AGENT_MEMORY_HOME: stateRoot })
+    assert.deepEqual(result, { code: 0, output, errors: '' })
+    assert.equal(await readFile(join(root, 'STATUS.md'), 'utf8').then(() => true), true)
+    assert.deepEqual(await readFile(join(root, 'AGENTS.md')), await readFile(join(root, 'CLAUDE.md')))
+    const cadence = await runCli(['prompt', '--host', host], { cwd: root, session_id: `${host}-session`, prompt: 'ordinary prompt' }, { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '1' })
+    assert.equal(cadence.output, host === 'codex' ? `{\"systemMessage\":\"${reminder}\"}\n` : `${reminder}\n`)
+  }
+
+  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
+  const result = await runCli(['prompt', '--host', 'claude'], { cwd: root, session_id: 'ordinary', prompt: 'please run agent-memory:init' }, { AGENT_MEMORY_HOME: stateRoot })
+  assert.deepEqual(result, { code: 0, output: '', errors: '' })
+  await assert.rejects(readFile(join(root, 'STATUS.md')))
+})
+
+test('installed cache prompt marker preserves existing project memory', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'agent-memory-cache-'))
+  const installedRoot = join(cacheRoot, 'auto-update-claude-md')
+  const targetRoot = await mkdtemp(join(tmpdir(), 'agent-memory-target-'))
+  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
+  await mkdir(installedRoot)
+  await Promise.all(['bin', 'lib', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
+  await writeFile(join(targetRoot, 'STATUS.md'), 'existing status', 'utf8')
+  await writeFile(join(targetRoot, 'AGENTS.md'), 'existing agents', 'utf8')
+  await writeFile(join(targetRoot, 'CLAUDE.md'), 'existing claude', 'utf8')
+
+  const result = await runCliAt(join(installedRoot, 'bin', 'project-memory.mjs'), targetRoot, ['prompt', '--host', 'codex'], { cwd: targetRoot, session_id: 'cache-session', message: 'agent-memory:init' }, { AGENT_MEMORY_HOME: stateRoot })
+
+  assert.deepEqual(result, { code: 0, output: '{"systemMessage":"Project memory initialized."}\n', errors: '' })
+  assert.equal(await readFile(join(targetRoot, 'STATUS.md'), 'utf8'), 'existing status')
+  assert.equal(await readFile(join(targetRoot, 'AGENTS.md'), 'utf8'), 'existing agents')
+  assert.equal(await readFile(join(targetRoot, 'CLAUDE.md'), 'utf8'), 'existing claude')
+})
+
+test('installed cache prompt marker creates byte-identical pointer files in its target project', async () => {
+  const cacheRoot = await mkdtemp(join(tmpdir(), 'agent-memory-cache-'))
+  const installedRoot = join(cacheRoot, 'auto-update-claude-md')
+  const targetRoot = await mkdtemp(join(tmpdir(), 'agent-memory-target-'))
+  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
+  await mkdir(installedRoot)
+  await Promise.all(['bin', 'lib', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
+
+  const result = await runCliAt(join(installedRoot, 'bin', 'project-memory.mjs'), targetRoot, ['prompt', '--host', 'kimi'], { cwd: targetRoot, session_id: 'cache-session', input: 'agent-memory:init' }, { AGENT_MEMORY_HOME: stateRoot })
+
+  assert.deepEqual(result, { code: 0, output: 'Project memory initialized.\n', errors: '' })
+  assert.match(await readFile(join(targetRoot, 'STATUS.md'), 'utf8'), /## Current state/)
+  assert.deepEqual(await readFile(join(targetRoot, 'AGENTS.md')), await readFile(join(targetRoot, 'CLAUDE.md')))
 })
 
 test('prompt command stays silent until the project is initialized', async () => {
