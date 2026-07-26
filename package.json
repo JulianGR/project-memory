@@ -1,0 +1,11 @@
+{
+  "name": "auto-update-claude-md",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}
