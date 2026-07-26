@@ -213,12 +213,14 @@ test('formatReminder uses host-appropriate output', () => {
   assert.equal(formatReminder('kimi', { count: 4, interval: 4 }), reminder)
 })
 
-test('prompt marker initializes only exact host payload variants', async () => {
+test('prompt marker initializes only the exact literal across supported payload fields', async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
   const cases = [
-    { host: 'claude', event: { prompt: 'AGENT-MEMORY:INIT' }, output: 'Project memory initialized.\n' },
+    { host: 'claude', event: { prompt: 'agent-memory:init' }, output: 'Project memory initialized.\n' },
     { host: 'codex', event: { user_prompt: 'agent-memory:init' }, output: '{"systemMessage":"Project memory initialized."}\n' },
-    { host: 'kimi', event: { userPrompt: 'agent-memory:init' }, output: 'Project memory initialized.\n' }
+    { host: 'kimi', event: { userPrompt: 'agent-memory:init' }, output: 'Project memory initialized.\n' },
+    { host: 'claude', event: { message: 'agent-memory:init' }, output: 'Project memory initialized.\n' },
+    { host: 'codex', event: { input: 'agent-memory:init' }, output: '{"systemMessage":"Project memory initialized."}\n' }
   ]
 
   for (const { host, event, output } of cases) {
@@ -231,10 +233,28 @@ test('prompt marker initializes only exact host payload variants', async () => {
     assert.equal(cadence.output, host === 'codex' ? `{\"systemMessage\":\"${reminder}\"}\n` : `${reminder}\n`)
   }
 
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const result = await runCli(['prompt', '--host', 'claude'], { cwd: root, session_id: 'ordinary', prompt: 'please run agent-memory:init' }, { AGENT_MEMORY_HOME: stateRoot })
-  assert.deepEqual(result, { code: 0, output: '', errors: '' })
-  await assert.rejects(readFile(join(root, 'STATUS.md')))
+})
+
+test('prompt marker rejects non-exact values without creating project files', async () => {
+  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
+  const cases = [
+    { prompt: 'AGENT-MEMORY:INIT' },
+    { user_prompt: 'Agent-memory:init' },
+    { userPrompt: ' agent-memory:init' },
+    { message: 'agent-memory:init ' },
+    { input: 'please run agent-memory:init' },
+    { prompt: 'agent-memory:init now' },
+    { prompt: 'ordinary user prompt' }
+  ]
+
+  for (const event of cases) {
+    const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
+    const result = await runCli(['prompt', '--host', 'claude'], { cwd: root, session_id: 'ordinary', ...event }, { AGENT_MEMORY_HOME: stateRoot })
+    assert.deepEqual(result, { code: 0, output: '', errors: '' })
+    await assert.rejects(readFile(join(root, 'STATUS.md')))
+    await assert.rejects(readFile(join(root, 'AGENTS.md')))
+    await assert.rejects(readFile(join(root, 'CLAUDE.md')))
+  }
 })
 
 test('installed cache prompt marker preserves existing project memory', async () => {

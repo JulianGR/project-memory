@@ -16,7 +16,7 @@ async function eventFromInput() {
 }
 
 function isInitializationMarker(event) {
-  return ['prompt', 'user_prompt', 'userPrompt', 'message', 'input'].some((key) => typeof event[key] === 'string' && event[key].toLowerCase() === initializationMarker)
+  return ['prompt', 'user_prompt', 'userPrompt', 'message', 'input'].some((key) => event[key] === initializationMarker)
 }
 
 function formatInitialization(host) {
