@@ -54,10 +54,11 @@ prompt context and follows the project's `CLAUDE.md` pointer.
 
 ### Claude Desktop
 
-Use Claude Desktop's local Code/plugin UI when it is available to add the
-`JulianGR/auto-update-claude-md` marketplace and install
-`auto-update-claude-md`. The Claude Code slash commands above are for Claude
-Code sessions, not a claim that Claude Desktop is a CLI wrapper.
+First, use the Claude Code slash commands above to add the marketplace and
+install `auto-update-claude-md`. Then Claude Desktop can enable or install it
+when it appears from that already-configured marketplace. If the marketplace
+cannot be configured through Claude Code, the plugin hooks cannot be installed
+in Desktop-only mode.
 
 ### Kimi Code CLI
 
