@@ -27,7 +27,7 @@ per-session counter outside the project under the user's home directory.
 
 ## Install
 
-### Codex Desktop
+### Codex
 
 Add the repository marketplace, then install the plugin:
 
@@ -36,11 +36,10 @@ codex plugin marketplace add JulianGR/auto-update-claude-md
 codex plugin add auto-update-claude-md@auto-update-claude-md
 ```
 
-Codex Desktop shares this local plugin configuration. Restart or open a new task
-after installation. Codex shows a visible checkpoint through its hook output;
-the semantic rule remains the project's `AGENTS.md`.
+Restart or open a new task after installation. Codex shows a visible checkpoint
+through its hook output; the semantic rule remains the project's `AGENTS.md`.
 
-### Claude Desktop and Claude Code
+### Claude Code
 
 In a Claude Code session, add the repository marketplace and install the root
 plugin package:
@@ -53,14 +52,21 @@ plugin package:
 Restart the session after installation. Claude receives the cadence reminder as
 prompt context and follows the project's `CLAUDE.md` pointer.
 
+### Claude Desktop
+
+Use Claude Desktop's local Code/plugin UI when it is available to add the
+`JulianGR/auto-update-claude-md` marketplace and install
+`auto-update-claude-md`. The Claude Code slash commands above are for Claude
+Code sessions, not a claim that Claude Desktop is a CLI wrapper.
+
 ### Kimi Code CLI
 
 From an interactive Kimi Code CLI session, install the repository root and then
-reload plugins:
+reload:
 
 ```text
 /plugins install https://github.com/JulianGR/auto-update-claude-md
-/plugins reload
+/reload
 ```
 
 Kimi CLI receives cadence context from its plugin hooks and uses `AGENTS.md`.

@@ -10,8 +10,10 @@ async function readJson(path) {
   return JSON.parse(await readFile(join(projectRoot, path), 'utf8'))
 }
 
-test('root package provides every host manifest', async () => {
+test('installed root provides the Node runtime and every host manifest', async () => {
   await Promise.all([
+    access(join(projectRoot, 'bin', 'project-memory.mjs')),
+    access(join(projectRoot, 'lib', 'project-memory.mjs')),
     access(join(projectRoot, '.claude-plugin', 'plugin.json')),
     access(join(projectRoot, '.codex-plugin', 'plugin.json')),
     access(join(projectRoot, '.agents', 'plugins', 'marketplace.json')),
