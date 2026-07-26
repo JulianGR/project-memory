@@ -167,13 +167,17 @@ git commit -m "feat: add project memory core"
 
 **Files:**
 
-- Modify: `auto-update-claude-md/plugins/auto-update-claude-md/hooks/hooks.json`
-- Modify: `auto-update-claude-md/plugins/auto-update-claude-md/skills/auto-update-claude-md/SKILL.md`
+- Modify: `auto-update-claude-md/.claude-plugin/marketplace.json`
+- Create: `auto-update-claude-md/.claude-plugin/plugin.json`
 - Create: `auto-update-claude-md/.codex-plugin/plugin.json`
 - Create: `auto-update-claude-md/hooks/hooks.json`
+- Create: `auto-update-claude-md/skills/auto-update-claude-md/SKILL.md`
 - Create: `auto-update-claude-md/kimi.plugin.json`
+- Create: `auto-update-claude-md/.agents/plugins/marketplace.json`
 - Modify: `auto-update-claude-md/README.md`
 - Create: `auto-update-claude-md/tests/manifests.test.mjs`
+- Delete: `auto-update-claude-md/plugins/auto-update-claude-md/`
+- Delete: `auto-update-claude-md/install.sh`
 
 **Interfaces:**
 
@@ -186,7 +190,7 @@ git commit -m "feat: add project memory core"
 test('Codex manifest exposes project-memory hooks', async () => {
   const manifest = JSON.parse(await readFile('.codex-plugin/plugin.json', 'utf8'))
   assert.equal(manifest.name, 'auto-update-claude-md')
-  assert.equal(manifest.hooks, './hooks/hooks.json')
+  await access('hooks/hooks.json')
 })
 
 test('Kimi manifest declares session and prompt hooks', async () => {
@@ -203,7 +207,7 @@ Expected: FAIL because Codex and Kimi manifests are absent.
 
 - [ ] **Step 3: Add thin adapters**
 
-Use these commands in every adapter:
+The repository root is the plugin root for all three hosts. Both marketplace entries use `"source": "./"`; this is necessary so the installed plugin includes the Node core. Use these commands in every adapter:
 
 ```json
 {
@@ -212,7 +216,7 @@ Use these commands in every adapter:
 }
 ```
 
-The Claude adapter uses `CLAUDE_PLUGIN_ROOT`; the Codex adapter uses `PLUGIN_ROOT` with `CLAUDE_PLUGIN_ROOT` compatibility; the Kimi adapter uses `node ./bin/project-memory.mjs prompt --host kimi`. `SessionStart` calls `session-start` and `UserPromptSubmit` calls `prompt`.
+The Claude adapter uses `CLAUDE_PLUGIN_ROOT`; Codex accepts the same compatibility variable; the Kimi adapter uses `node ./bin/project-memory.mjs prompt --host kimi`. `SessionStart` calls `session-start` and `UserPromptSubmit` calls `prompt`. The Codex manifest leaves out its optional `hooks` field and relies on the default `hooks/hooks.json` discovery.
 
 - [ ] **Step 4: Update the skill and README**
 
@@ -233,7 +237,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit the host packages**
 
 ```bash
-git add plugins .codex-plugin hooks kimi.plugin.json README.md tests
+git add .claude-plugin .codex-plugin .agents hooks skills kimi.plugin.json README.md tests
+git rm -r plugins install.sh
 git commit -m "feat: support Codex and Kimi project memory"
 ```
 
@@ -337,13 +342,17 @@ git commit -m "feat: add cross-platform compaction core"
 
 **Files:**
 
-- Modify: `compaction-watch/plugins/compaction-watch/hooks/hooks.json`
-- Modify: `compaction-watch/plugins/compaction-watch/skills/compaction-watch/SKILL.md`
+- Modify: `compaction-watch/.claude-plugin/marketplace.json`
+- Create: `compaction-watch/.claude-plugin/plugin.json`
 - Create: `compaction-watch/.codex-plugin/plugin.json`
 - Create: `compaction-watch/hooks/hooks.json`
+- Create: `compaction-watch/skills/compaction-watch/SKILL.md`
 - Create: `compaction-watch/kimi.plugin.json`
+- Create: `compaction-watch/.agents/plugins/marketplace.json`
 - Create: `compaction-watch/tests/manifests.test.mjs`
 - Modify: `compaction-watch/README.md`
+- Delete: `compaction-watch/plugins/compaction-watch/`
+- Delete: `compaction-watch/install.sh`
 
 **Interfaces:**
 
@@ -354,7 +363,7 @@ git commit -m "feat: add cross-platform compaction core"
 
 ```js
 test('all host adapters run the Node counter at PreCompact', async () => {
-  for (const file of ['plugins/compaction-watch/hooks/hooks.json', 'hooks/hooks.json', 'kimi.plugin.json']) {
+  for (const file of ['hooks/hooks.json', 'kimi.plugin.json']) {
     const text = await readFile(file, 'utf8')
     assert.match(text, /compaction-watch\.mjs.*count/)
   }
@@ -368,6 +377,8 @@ Run: `node --test tests/manifests.test.mjs`
 Expected: FAIL because the adapters still use shell scripts or are missing.
 
 - [ ] **Step 3: Replace shell hook paths with Node adapter paths**
+
+The repository root is the plugin root for all three hosts. Both marketplace entries use `"source": "./"`; this is necessary so the installed plugin includes the Node core. Codex relies on default `hooks/hooks.json` discovery rather than a manifest `hooks` field.
 
 Configure these lifecycle events:
 
@@ -386,7 +397,7 @@ Configure these lifecycle events:
 | Kimi | `UserPromptSubmit` | `notify --host kimi --repeat` |
 | Kimi | `SessionStart` | `prune --host kimi` |
 
-Keep `statusline.sh` documented as a legacy Claude CLI option only. Do not make it the primary desktop notification path.
+Remove the terminal-only statusline integration. Desktop-visible hook output and best-effort OS notifications are the product surface.
 
 - [ ] **Step 4: Update documentation and skill instructions**
 
@@ -406,7 +417,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit the host packages**
 
 ```bash
-git add plugins .codex-plugin hooks kimi.plugin.json README.md tests
+git add .claude-plugin .codex-plugin .agents hooks skills kimi.plugin.json README.md tests
+git rm -r plugins install.sh
 git commit -m "feat: support Codex and Kimi compaction alerts"
 ```
 
@@ -462,8 +474,10 @@ Expected: both commands exit 0.
 Run:
 
 ```bash
-codex plugin add C:/Users/jules/Downloads/auto-update-claude-md
-codex plugin add C:/Users/jules/Downloads/compaction-watch
+codex plugin marketplace add C:/Users/jules/Downloads/auto-update-claude-md
+codex plugin marketplace add C:/Users/jules/Downloads/compaction-watch
+codex plugin add auto-update-claude-md@auto-update-claude-md
+codex plugin add compaction-watch@compaction-watch
 codex plugin list
 ```
 
