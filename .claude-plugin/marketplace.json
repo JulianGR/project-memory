@@ -1,12 +1,12 @@
 {
-  "name": "auto-update-claude-md",
+  "name": "project-memory",
   "owner": {
     "name": "JulianGR"
   },
   "description": "Cross-agent project memory for Claude Code, Codex, and Kimi.",
   "plugins": [
     {
-      "name": "auto-update-claude-md",
+      "name": "project-memory",
       "source": "./",
       "description": "Initialize durable project memory and remind agents to review it on a configurable cadence.",
       "category": "productivity"

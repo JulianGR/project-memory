@@ -259,7 +259,7 @@ test('prompt marker rejects non-exact values without creating project files', as
 
 test('installed cache prompt marker preserves existing project memory', async () => {
   const cacheRoot = await mkdtemp(join(tmpdir(), 'agent-memory-cache-'))
-  const installedRoot = join(cacheRoot, 'auto-update-claude-md')
+  const installedRoot = join(cacheRoot, 'project-memory')
   const targetRoot = await mkdtemp(join(tmpdir(), 'agent-memory-target-'))
   const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
   await mkdir(installedRoot)
@@ -278,7 +278,7 @@ test('installed cache prompt marker preserves existing project memory', async ()
 
 test('installed cache prompt marker creates byte-identical pointer files in its target project', async () => {
   const cacheRoot = await mkdtemp(join(tmpdir(), 'agent-memory-cache-'))
-  const installedRoot = join(cacheRoot, 'auto-update-claude-md')
+  const installedRoot = join(cacheRoot, 'project-memory')
   const targetRoot = await mkdtemp(join(tmpdir(), 'agent-memory-target-'))
   const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
   await mkdir(installedRoot)

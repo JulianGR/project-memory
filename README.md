@@ -32,8 +32,8 @@ per-session counter outside the project under the user's home directory.
 Add the repository marketplace, then install the plugin:
 
 ```text
-codex plugin marketplace add JulianGR/auto-update-claude-md
-codex plugin add auto-update-claude-md@auto-update-claude-md
+codex plugin marketplace add JulianGR/project-memory
+codex plugin add project-memory@project-memory
 ```
 
 Restart or open a new task after installation. Codex shows a visible checkpoint
@@ -45,8 +45,8 @@ In a Claude Code session, add the repository marketplace and install the root
 plugin package:
 
 ```text
-/plugin marketplace add JulianGR/auto-update-claude-md
-/plugin install auto-update-claude-md@auto-update-claude-md
+/plugin marketplace add JulianGR/project-memory
+/plugin install project-memory@project-memory
 ```
 
 Restart the session after installation. Claude receives the cadence reminder as
@@ -55,7 +55,7 @@ prompt context and follows the project's `CLAUDE.md` pointer.
 ### Claude Desktop
 
 First, use the Claude Code slash commands above to add the marketplace and
-install `auto-update-claude-md`. Then Claude Desktop can enable or install it
+install `project-memory`. Then Claude Desktop can enable or install it
 when it appears from that already-configured marketplace. If the marketplace
 cannot be configured through Claude Code, the plugin hooks cannot be installed
 in Desktop-only mode.
@@ -66,7 +66,7 @@ From an interactive Kimi Code CLI session, install the repository root and then
 reload:
 
 ```text
-/plugins install https://github.com/JulianGR/auto-update-claude-md
+/plugins install https://github.com/JulianGR/project-memory
 /reload
 ```
 

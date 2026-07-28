@@ -1,5 +1,5 @@
 ---
-name: auto-update-claude-md
+name: project-memory
 description: Initialize and maintain concise, durable project memory for Claude, Codex, and Kimi.
 ---
 

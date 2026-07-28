@@ -1,11 +1,11 @@
 {
-  "name": "auto-update-claude-md",
+  "name": "project-memory",
   "interface": {
     "displayName": "Project Memory"
   },
   "plugins": [
     {
-      "name": "auto-update-claude-md",
+      "name": "project-memory",
       "source": {
         "source": "local",
         "path": "./"

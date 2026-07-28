@@ -1,13 +1,13 @@
 {
-  "name": "auto-update-claude-md",
+  "name": "project-memory",
   "version": "1.0.0",
   "description": "Durable project memory with configurable reminders for Codex.",
   "author": {
     "name": "JulianGR",
     "url": "https://github.com/JulianGR"
   },
-  "homepage": "https://github.com/JulianGR/auto-update-claude-md",
-  "repository": "https://github.com/JulianGR/auto-update-claude-md",
+  "homepage": "https://github.com/JulianGR/project-memory",
+  "repository": "https://github.com/JulianGR/project-memory",
   "license": "MIT",
   "keywords": ["memory", "handoff", "project-context"],
   "skills": "./skills/",

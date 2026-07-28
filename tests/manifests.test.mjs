@@ -29,7 +29,7 @@ test('Claude marketplace installs the repository root', async () => {
 
 test('Claude manifest registers Claude lifecycle hooks', async () => {
   const manifest = await readJson('.claude-plugin/plugin.json')
-  assert.equal(manifest.name, 'auto-update-claude-md')
+  assert.equal(manifest.name, 'project-memory')
   assert.equal(manifest.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host claude')
   assert.equal(manifest.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host claude')
 })
@@ -37,7 +37,7 @@ test('Claude manifest registers Claude lifecycle hooks', async () => {
 test('Codex manifest exposes default-discovered Codex hooks', async () => {
   const manifest = await readJson('.codex-plugin/plugin.json')
   const hooks = await readJson('hooks/hooks.json')
-  assert.equal(manifest.name, 'auto-update-claude-md')
+  assert.equal(manifest.name, 'project-memory')
   assert.equal(manifest.hooks, undefined)
   assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host codex')
   assert.equal(hooks.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host codex')
