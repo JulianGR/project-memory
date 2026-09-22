@@ -7,69 +7,67 @@ import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { initializeProject, isInitialized } from '../lib/project-memory.mjs'
 
-const testDirectory = dirname(fileURLToPath(import.meta.url))
-const projectRoot = join(testDirectory, '..')
+const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = join(projectRoot, 'bin', 'project-memory.mjs')
-const policyStart = '<!-- project-memory:policy:start -->'
-const policyEnd = '<!-- project-memory:policy:end -->'
-const stateStart = '<!-- project-memory:state:start -->'
-const stateEnd = '<!-- project-memory:state:end -->'
-const markers = [policyStart, policyEnd, stateStart, stateEnd]
+const markers = ['policy:start', 'policy:end', 'state:start', 'state:end'].map((name) => `<!-- project-memory:${name} -->`)
+const [policyStart, policyEnd, stateStart, stateEnd] = markers
+const silent = { code: 0, output: '', errors: '' }
 
-async function temporaryDirectory(t, prefix) {
+async function temporaryDirectory(t, prefix = 'agent-memory-project-') {
   const root = await mkdtemp(join(tmpdir(), prefix))
-  const tempRoot = resolve(tmpdir()).toLowerCase()
-  const candidate = resolve(root).toLowerCase()
-  assert.equal(candidate.startsWith(`${tempRoot}${sep}`.toLowerCase()), true)
+  assert.ok(resolve(root).toLowerCase().startsWith(`${resolve(tmpdir())}${sep}`.toLowerCase()))
   t.after(() => rm(root, { recursive: true, force: true }))
   return root
 }
 
-function runCli(args, event) {
-  return runCliInput(args, JSON.stringify(event))
-}
-
-function runCliInput(args, input) {
-  return runCliAt(cliPath, projectRoot, args, input)
-}
-
-function runCliAt(binary, cwd, args, input) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [binary, ...args], {
-      cwd,
-      env: { ...process.env },
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+function runCli(args, { binary = cliPath, cwd = projectRoot, event, input, keepStdinOpen = false } = {}) {
+  return new Promise((resolveResult, reject) => {
+    const child = spawn(process.execPath, [binary, ...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
     let output = ''
     let errors = ''
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill()
+    }, 3000)
     child.stdout.on('data', (chunk) => { output += chunk })
     child.stderr.on('data', (chunk) => { errors += chunk })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ code, output, errors }))
-    child.stdin.end(input)
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      if (timedOut) reject(new Error(`CLI timed out: ${args.join(' ')}`))
+      else resolveResult({ code, output, errors })
+    })
+    if (!keepStdinOpen) child.stdin.end(input ?? JSON.stringify(event))
   })
 }
 
-function markerCount(content, marker) {
-  return content.split(marker).length - 1
+function jsonOutput(result, label) {
+  assert.equal(result.code, 0, label || result.errors)
+  assert.equal(result.errors, '', label)
+  return JSON.parse(result.output)
 }
 
 function assertMarkers(content) {
-  for (const marker of markers) assert.equal(markerCount(content, marker), 1)
+  for (const marker of markers) assert.equal(content.split(marker).length - 1, 1, marker)
   const positions = markers.map((marker) => content.indexOf(marker))
   assert.deepEqual([...positions].sort((first, second) => first - second), positions)
 }
 
-function hookOutput(result, eventName) {
-  assert.equal(result.code, 0)
-  assert.equal(result.errors, '')
-  const payload = JSON.parse(result.output)
-  assert.deepEqual(Object.keys(payload), ['hookSpecificOutput'])
-  assert.deepEqual(Object.keys(payload.hookSpecificOutput).sort(), ['additionalContext', 'hookEventName'])
-  assert.equal(payload.hookSpecificOutput.hookEventName, eventName)
-  assert.equal(typeof payload.hookSpecificOutput.additionalContext, 'string')
-  assert.match(payload.hookSpecificOutput.additionalContext, /AGENTS\.md/)
-  return payload
+function assertStop(result, host, label) {
+  const payload = jsonOutput(result, label)
+  const reason = payload.reason ?? payload.hookSpecificOutput?.additionalContext ?? payload.hookSpecificOutput?.permissionDecisionReason
+  assert.equal(typeof reason, 'string', label)
+  assert.match(reason, /AGENTS\.md/, label)
+  const expected = {
+    codex: { decision: 'block', reason },
+    claude: { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: reason } },
+    kimi: { hookSpecificOutput: { hookEventName: 'Stop', permissionDecision: 'deny', permissionDecisionReason: reason } }
+  }
+  assert.deepEqual(payload, expected[host], label)
 }
 
 async function installedBinary(t) {
@@ -80,97 +78,66 @@ async function installedBinary(t) {
   return join(installedRoot, 'bin', 'project-memory.mjs')
 }
 
-test('initializeProject creates only AGENTS.md with the four protocol markers', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
+test('initialization creates or preserves AGENTS.md and repeated initialization changes neither bytes nor mtime', async (t) => {
+  for (const original of ['', 'Local instructions that must remain intact.\n']) {
+    const root = await temporaryDirectory(t)
+    const path = join(root, 'AGENTS.md')
+    const notes = 'This unrelated file must not become project memory.\n'
+    if (original) {
+      await writeFile(path, original)
+      await writeFile(join(root, 'NOTES.md'), notes)
+    }
 
-  const result = await initializeProject(root)
-  const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
+    assert.deepEqual(await initializeProject(root), { existing: { agents: Boolean(original) }, updated: true })
+    const content = await readFile(path)
+    const agents = content.toString()
+    assert.equal(agents.startsWith(original), true)
+    assert.equal(agents.includes(notes), false)
+    assertMarkers(agents)
+    if (original) assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes)
 
-  assert.deepEqual(result, { existing: { agents: false }, updated: true })
-  assertMarkers(agents)
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-})
-
-test('initializeProject preserves existing instructions and does not import NOTES.md', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  const original = 'Local instructions that must remain intact.\n'
-  const notes = 'This unrelated file must not become project memory.\n'
-  await writeFile(join(root, 'AGENTS.md'), original, 'utf8')
-  await writeFile(join(root, 'NOTES.md'), notes, 'utf8')
-
-  const result = await initializeProject(root)
-  const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
-
-  assert.deepEqual(result, { existing: { agents: true }, updated: true })
-  assert.equal(agents.startsWith(original), true)
-  assert.equal(agents.includes(notes), false)
-  assertMarkers(agents)
-  assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes)
-  assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'NOTES.md'])
-})
-
-test('initializeProject is a byte and mtime no-op for initialized AGENTS.md', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  await initializeProject(root)
-  const agentsPath = join(root, 'AGENTS.md')
-  const knownTime = new Date('2000-01-02T03:04:05.000Z')
-  await utimes(agentsPath, knownTime, knownTime)
-  const before = await stat(agentsPath, { bigint: true })
-  const content = await readFile(agentsPath)
-
-  const result = await initializeProject(root)
-  const after = await stat(agentsPath, { bigint: true })
-
-  assert.deepEqual(result, { existing: { agents: true }, updated: false })
-  assert.deepEqual(await readFile(agentsPath), content)
-  assert.equal(after.mtimeNs, before.mtimeNs)
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-})
-
-test('isInitialized requires four unique ordered markers and rejects arbitrary instructions', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  await writeFile(join(root, 'AGENTS.md'), 'arbitrary instructions', 'utf8')
-  assert.equal(await isInitialized(root), false)
-
-  await initializeProject(root)
-  const valid = await readFile(join(root, 'AGENTS.md'), 'utf8')
-  assert.equal(await isInitialized(root), true)
-
-  const cases = [
-    valid.replace(stateEnd, `${stateEnd}\n${stateEnd}`),
-    `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`,
-    `${policyStart}\n${policyEnd}\n${stateStart}\n`
-  ]
-  for (const content of cases) {
-    await writeFile(join(root, 'AGENTS.md'), content, 'utf8')
-    assert.equal(await isInitialized(root), false)
+    const knownTime = new Date('2000-01-02T03:04:05.000Z')
+    await utimes(path, knownTime, knownTime)
+    const before = await stat(path, { bigint: true })
+    assert.deepEqual(await initializeProject(root), { existing: { agents: true }, updated: false })
+    assert.deepEqual(await readFile(path), content)
+    assert.equal((await stat(path, { bigint: true })).mtimeNs, before.mtimeNs)
+    assert.deepEqual((await readdir(root)).sort(), original ? ['AGENTS.md', 'NOTES.md'] : ['AGENTS.md'])
   }
 })
 
-test('initializeProject rejects partial markers without mutating files', async (t) => {
-  const partialDocuments = [
-    `${policyStart}\npartial\n${policyEnd}\n`,
-    `${stateStart}\npartial\n${stateEnd}\n`,
-    `${policyStart}\npartial\n${stateStart}\npartial\n${stateEnd}\n`
+test('only unique ordered complete markers activate memory; invalid markers are rejected without changing files', async (t) => {
+  const root = await temporaryDirectory(t)
+  const path = join(root, 'AGENTS.md')
+  const notes = 'Keep this unrelated file unchanged.\n'
+  assert.equal(await isInitialized(root), false)
+  await writeFile(path, 'arbitrary instructions')
+  await writeFile(join(root, 'NOTES.md'), notes)
+  assert.equal(await isInitialized(root), false)
+  await initializeProject(root)
+  const valid = await readFile(path, 'utf8')
+  assert.equal(await isInitialized(root), true)
+
+  const cases = [
+    ['duplicate marker', valid.replace(stateEnd, `${stateEnd}\n${stateEnd}`)],
+    ['wrong order', `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`],
+    ['missing state end', `${policyStart}\n${policyEnd}\n${stateStart}\n`],
+    ['policy only', `${policyStart}\npartial\n${policyEnd}\n`],
+    ['state only', `${stateStart}\npartial\n${stateEnd}\n`],
+    ['missing policy end', `${policyStart}\npartial\n${stateStart}\npartial\n${stateEnd}\n`]
   ]
-
-  for (const partial of partialDocuments) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    const notes = 'Keep this unrelated file unchanged.\n'
-    await writeFile(join(root, 'AGENTS.md'), partial, 'utf8')
-    await writeFile(join(root, 'NOTES.md'), notes, 'utf8')
-    const before = await Promise.all(['AGENTS.md', 'NOTES.md'].map((file) => readFile(join(root, file), 'utf8')))
-
-    await assert.rejects(initializeProject(root))
-
-    const after = await Promise.all(['AGENTS.md', 'NOTES.md'].map((file) => readFile(join(root, file), 'utf8')))
-    assert.deepEqual(after, before)
-    assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'NOTES.md'])
+  for (const [label, content] of cases) {
+    await writeFile(path, content)
+    assert.equal(await isInitialized(root), false, label)
+    await assert.rejects(initializeProject(root), /markers/, label)
+    assert.equal(await readFile(path, 'utf8'), content, label)
+    assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes, label)
+    assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'NOTES.md'], label)
   }
 })
 
 test('concurrent initialization writes one complete AGENTS.md document', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  const root = await temporaryDirectory(t)
   const results = await Promise.all(Array.from({ length: 8 }, () => initializeProject(root)))
 
   assert.equal(results.filter(({ updated }) => updated).length, 1)
@@ -181,243 +148,94 @@ test('concurrent initialization writes one complete AGENTS.md document', async (
   assert.deepEqual(await readdir(root), ['AGENTS.md'])
 })
 
-test('explicit init and status diagnose only the target project', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
+test('source and installed CLI require explicit targets, preserve files, and finish with stdin open from another cwd', async (t) => {
+  const launcherRoot = await temporaryDirectory(t, 'agent-memory-launcher-')
+  const cachedBinary = await installedBinary(t)
+  const cases = [
+    { binary: cliPath, original: '' },
+    { binary: cachedBinary, original: 'Keep these target instructions unchanged.\n' }
+  ]
+  for (const { binary, original } of cases) {
+    const targetRoot = await temporaryDirectory(t, 'agent-memory-target-')
+    const notes = 'Keep this unrelated target note unchanged.\n'
+    if (original) {
+      await writeFile(join(targetRoot, 'AGENTS.md'), original)
+      await writeFile(join(targetRoot, 'NOTES.md'), notes)
+    }
+    const options = { binary, cwd: launcherRoot, keepStdinOpen: true }
+    assert.deepEqual(jsonOutput(await runCli(['status', `--project=${targetRoot}`], options)), { initialized: false })
+    assert.deepEqual(jsonOutput(await runCli(['init', '--project', targetRoot], options)), { existing: { agents: Boolean(original) }, updated: true })
+    assert.deepEqual(jsonOutput(await runCli(['status', '--project', targetRoot], options)), { initialized: true })
 
-  const before = await runCli(['status'], { cwd: root })
-  const init = await runCli(['init'], { cwd: root })
-  const after = await runCli(['status'], { cwd: root })
-
-  assert.deepEqual(JSON.parse(before.output), { initialized: false })
-  assert.equal(init.code, 0)
-  assert.equal(init.errors, '')
-  assert.deepEqual(JSON.parse(init.output), { existing: { agents: false }, updated: true })
-  assert.deepEqual(JSON.parse(after.output), { initialized: true })
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-})
-
-test('explicit commands fail with code one for malformed input or missing cwd', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  for (const command of ['init', 'status']) {
-    const malformed = await runCliInput([command], '{')
-    const missing = await runCli([command], { cwd: '' })
-    assert.equal(malformed.code, 1)
-    assert.notEqual(malformed.errors, '')
-    assert.equal(missing.code, 1)
-    assert.notEqual(missing.errors, '')
+    const agents = await readFile(join(targetRoot, 'AGENTS.md'), 'utf8')
+    assertMarkers(agents)
+    assert.equal(agents.startsWith(original), true)
+    assert.equal(agents.includes(notes), false)
+    if (original) assert.equal(await readFile(join(targetRoot, 'NOTES.md'), 'utf8'), notes)
+    assert.deepEqual((await readdir(targetRoot)).sort(), original ? ['AGENTS.md', 'NOTES.md'] : ['AGENTS.md'])
   }
 
-  const unknown = await runCliInput(['unknown'], '{}')
-  assert.equal(unknown.code, 1)
-  assert.notEqual(unknown.errors, '')
-  assert.deepEqual(await readdir(root), [])
+  for (const command of ['init', 'status']) {
+    const result = await runCli([command], { cwd: launcherRoot, keepStdinOpen: true })
+    assert.equal(result.code, 1, command)
+    assert.match(result.errors, /--project/, command)
+    assert.equal(result.output, '', command)
+  }
+  assert.deepEqual(await readdir(launcherRoot), [])
 })
 
-test('lifecycle commands fail open for malformed input without mutating initialized files', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
+test('Stop detects hosts and honors overrides with the exact Claude, Codex, and Kimi payloads', async (t) => {
+  const root = await temporaryDirectory(t)
+  await initializeProject(root)
+  const cases = [
+    ['auto Codex', 'codex', [], { turn_id: 'turn-1' }],
+    ['auto Claude', 'claude', [], {}],
+    ['empty turn id', 'claude', [], { turn_id: '' }],
+    ['invalid turn id', 'claude', [], { turn_id: 42 }],
+    ['explicit Codex', 'codex', ['--host', 'codex'], {}],
+    ['explicit Claude', 'claude', ['--host', 'claude'], { turn_id: 'turn-1' }],
+    ['explicit Kimi', 'kimi', ['--host', 'kimi'], {}]
+  ]
+  const before = await readFile(join(root, 'AGENTS.md'))
+  for (const [label, host, args, event] of cases) {
+    assertStop(await runCli(['stop', ...args], { event: { cwd: root, ...event } }), host, label)
+  }
+  assert.deepEqual(await readFile(join(root, 'AGENTS.md')), before)
+})
+
+test('Stop silently ignores invalid events, unknown hosts, and uninitialized projects without writing', async (t) => {
+  const root = await temporaryDirectory(t)
+  const uninitialized = await temporaryDirectory(t)
   await initializeProject(root)
   const before = await readFile(join(root, 'AGENTS.md'))
-
-  for (const command of ['session-start', 'prompt', 'stop']) {
-    const malformed = await runCliInput([command, '--host', 'codex'], '{')
-    const missingCwd = await runCli([command, '--host', 'codex'], { session_id: 'not-required' })
-    const invalidObject = await runCliInput([command, '--host', 'codex'], '[]')
-    assert.deepEqual(malformed, { code: 0, output: '', errors: '' })
-    assert.deepEqual(missingCwd, { code: 0, output: '', errors: '' })
-    assert.deepEqual(invalidObject, { code: 0, output: '', errors: '' })
+  const cases = [
+    { label: 'malformed JSON', input: '{' },
+    { label: 'invalid event object', input: '[]' },
+    { label: 'missing cwd', event: {} },
+    { label: 'empty cwd', event: { cwd: '' } },
+    { label: 'unknown host', args: ['stop', '--host', 'unknown'], event: { cwd: root } },
+    { label: 'uninitialized project', event: { cwd: uninitialized, turn_id: 'turn-1' } }
+  ]
+  for (const { label, args = ['stop'], ...options } of cases) {
+    assert.deepEqual(await runCli(args, options), silent, label)
   }
-
   assert.deepEqual(await readFile(join(root, 'AGENTS.md')), before)
   assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  assert.deepEqual(await readdir(uninitialized), [])
 })
 
-test('the exact initialization literal works in every supported event field', async (t) => {
-  const fields = ['prompt', 'user_prompt', 'userPrompt', 'message', 'input']
-  for (const field of fields) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    const result = await runCli(['prompt', '--host', 'kimi'], { cwd: root, [field]: 'agent-memory:init' })
-    const status = await runCli(['status'], { cwd: root })
-
-    assert.equal(result.code, 0)
-    assert.equal(result.errors, '')
-    assert.match(result.output, /Project memory initialized in AGENTS\.md/)
-    assert.deepEqual(JSON.parse(status.output), { initialized: true })
-    assertMarkers(await readFile(join(root, 'AGENTS.md'), 'utf8'))
-    assert.deepEqual(await readdir(root), ['AGENTS.md'])
-  }
-})
-
-test('the initialization literal uses structured UserPromptSubmit output for Claude and Codex', async (t) => {
-  for (const host of ['claude', 'codex']) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    const result = await runCli(['prompt', '--host', host], { cwd: root, prompt: 'agent-memory:init' })
-    const payload = hookOutput(result, 'UserPromptSubmit')
-
-    assert.match(payload.hookSpecificOutput.additionalContext, /Project memory initialized in AGENTS\.md/)
-    assert.deepEqual(await readdir(root), ['AGENTS.md'])
-  }
-})
-
-test('non-exact initialization values do not opt a project in', async (t) => {
-  const cases = [
-    { prompt: 'AGENT-MEMORY:INIT' },
-    { user_prompt: 'Agent-memory:init' },
-    { userPrompt: ' agent-memory:init' },
-    { message: 'agent-memory:init ' },
-    { input: 'please run agent-memory:init' },
-    { prompt: 'agent-memory:init now' },
-    { prompt: 'ordinary user prompt' }
-  ]
-
-  for (const fields of cases) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    const result = await runCli(['prompt', '--host', 'kimi'], { cwd: root, ...fields })
-    const status = await runCli(['status'], { cwd: root })
-
-    assert.deepEqual(result, { code: 0, output: '', errors: '' })
-    assert.deepEqual(JSON.parse(status.output), { initialized: false })
-    assert.deepEqual(await readdir(root), [])
-  }
-})
-
-test('ordinary lifecycle hooks stay silent and create no files in an uninitialized project', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  const event = { cwd: root, prompt: 'ordinary prompt' }
-
-  for (const host of ['claude', 'codex', 'kimi']) {
-    for (const command of ['session-start', 'prompt', 'stop']) {
-      const result = await runCli([command, '--host', host], event)
-      assert.deepEqual(result, { code: 0, output: '', errors: '' })
-    }
-  }
-
-  assert.deepEqual(await readdir(root), [])
-})
-
-test('an arbitrary AGENTS.md does not opt a project into lifecycle hooks', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  const original = 'Arbitrary project instructions without project-memory markers.\n'
-  await writeFile(join(root, 'AGENTS.md'), original, 'utf8')
-
-  for (const host of ['claude', 'codex', 'kimi']) {
-    for (const command of ['session-start', 'prompt', 'stop']) {
-      const result = await runCli([command, '--host', host], { cwd: root })
-      assert.deepEqual(result, { code: 0, output: '', errors: '' })
-    }
-  }
-
-  assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), original)
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-})
-
-test('ordinary lifecycle hooks preserve AGENTS.md bytes and mtime', async (t) => {
-  for (const host of ['claude', 'codex', 'kimi']) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    await initializeProject(root)
-    const agentsPath = join(root, 'AGENTS.md')
-    const knownTime = new Date('2000-01-02T03:04:05.000Z')
-    await utimes(agentsPath, knownTime, knownTime)
-    const beforeContent = await readFile(agentsPath)
-    const beforeStat = await stat(agentsPath, { bigint: true })
-
-    for (const command of ['session-start', 'prompt', 'stop']) {
-      const result = await runCli([command, '--host', host], { cwd: root, prompt: 'ordinary prompt' })
-      assert.equal(result.code, 0)
-    }
-
-    assert.deepEqual(await readFile(agentsPath), beforeContent)
-    assert.equal((await stat(agentsPath, { bigint: true })).mtimeNs, beforeStat.mtimeNs)
-  }
-})
-
-test('Claude and Codex lifecycle output is structured and always references AGENTS.md', async (t) => {
-  for (const host of ['claude', 'codex']) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    await initializeProject(root)
-
-    hookOutput(await runCli(['session-start', '--host', host], { cwd: root }), 'SessionStart')
-    const firstPrompt = hookOutput(await runCli(['prompt', '--host', host], { cwd: root, prompt: 'ordinary prompt' }), 'UserPromptSubmit')
-    const secondPrompt = hookOutput(await runCli(['prompt', '--host', host], { cwd: root, prompt: 'ordinary prompt' }), 'UserPromptSubmit')
-
-    assert.equal(firstPrompt.hookSpecificOutput.additionalContext, secondPrompt.hookSpecificOutput.additionalContext)
-    assert.deepEqual(await readdir(root), ['AGENTS.md'])
-  }
-})
-
-test('Kimi lifecycle output is plain text and prompts always include the reminder', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
+test('Stop guards prevent nested reviews and fail open for invalid guard values', async (t) => {
+  const root = await temporaryDirectory(t)
   await initializeProject(root)
-
-  const session = await runCli(['session-start', '--host', 'kimi'], { cwd: root })
-  const firstPrompt = await runCli(['prompt', '--host', 'kimi'], { cwd: root })
-  const secondPrompt = await runCli(['prompt', '--host', 'kimi'], { cwd: root })
-
-  assert.equal(session.code, 0)
-  assert.equal(session.errors, '')
-  assert.match(session.output, /AGENTS\.md/)
-  assert.match(firstPrompt.output, /AGENTS\.md/)
-  assert.equal(firstPrompt.output, secondPrompt.output)
-  assert.equal(firstPrompt.output.trim().startsWith('{'), false)
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-})
-
-test('Stop blocks Claude and Codex for initialized projects and avoids the stop hook loop', async (t) => {
-  for (const host of ['claude', 'codex']) {
-    const root = await temporaryDirectory(t, 'agent-memory-project-')
-    await initializeProject(root)
-
-    const stop = await runCli(['stop', '--host', host], { cwd: root })
-    const payload = JSON.parse(stop.output)
-    assert.equal(stop.code, 0)
-    assert.equal(stop.errors, '')
-    assert.equal(payload.decision, 'block')
-    assert.match(payload.reason, /AGENTS\.md/)
-
-    const active = await runCli(['stop', '--host', host], { cwd: root, stop_hook_active: true })
-    assert.deepEqual(active, { code: 0, output: '', errors: '' })
-    assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  for (const host of ['codex', 'kimi']) {
+    const args = host === 'codex' ? ['stop'] : ['stop', '--host', host]
+    for (const active of [true, 'true', 0, null, []]) {
+      const event = { cwd: root, turn_id: 'turn-1', stop_hook_active: active }
+      assert.deepEqual(await runCli(args, { event }), silent, `${host}: ${JSON.stringify(active)}`)
+    }
+    for (const active of [false, undefined]) {
+      const event = { cwd: root, turn_id: 'turn-1', stop_hook_active: active }
+      assertStop(await runCli(args, { event }), host, `${host}: ${active}`)
+    }
   }
-})
-
-test('Kimi Stop is silent for initialized projects', async (t) => {
-  const root = await temporaryDirectory(t, 'agent-memory-project-')
-  await initializeProject(root)
-
-  const result = await runCli(['stop', '--host', 'kimi'], { cwd: root })
-
-  assert.deepEqual(result, { code: 0, output: '', errors: '' })
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-})
-
-test('installed cache initializes only its temporary target project', async (t) => {
-  const binary = await installedBinary(t)
-  const targetRoot = await temporaryDirectory(t, 'agent-memory-target-')
-  const result = await runCliAt(binary, targetRoot, ['prompt', '--host', 'kimi'], JSON.stringify({ cwd: targetRoot, input: 'agent-memory:init' }))
-  const status = await runCliAt(binary, targetRoot, ['status'], JSON.stringify({ cwd: targetRoot }))
-
-  assert.equal(result.code, 0)
-  assert.equal(result.errors, '')
-  assert.match(result.output, /Project memory initialized in AGENTS\.md/)
-  assert.deepEqual(JSON.parse(status.output), { initialized: true })
-  assertMarkers(await readFile(join(targetRoot, 'AGENTS.md'), 'utf8'))
-  assert.deepEqual(await readdir(targetRoot), ['AGENTS.md'])
-})
-
-test('installed cache preserves existing instructions and arbitrary NOTES.md', async (t) => {
-  const binary = await installedBinary(t)
-  const targetRoot = await temporaryDirectory(t, 'agent-memory-target-')
-  const original = 'Keep these target instructions unchanged.\n'
-  const notes = 'Keep this unrelated target note unchanged.\n'
-  await writeFile(join(targetRoot, 'AGENTS.md'), original, 'utf8')
-  await writeFile(join(targetRoot, 'NOTES.md'), notes, 'utf8')
-
-  const result = await runCliAt(binary, targetRoot, ['init'], JSON.stringify({ cwd: targetRoot }))
-  const agents = await readFile(join(targetRoot, 'AGENTS.md'), 'utf8')
-
-  assert.deepEqual(JSON.parse(result.output), { existing: { agents: true }, updated: true })
-  assert.equal(agents.startsWith(original), true)
-  assert.equal(agents.includes(notes), false)
-  assertMarkers(agents)
-  assert.equal(await readFile(join(targetRoot, 'NOTES.md'), 'utf8'), notes)
-  assert.deepEqual((await readdir(targetRoot)).sort(), ['AGENTS.md', 'NOTES.md'])
 })

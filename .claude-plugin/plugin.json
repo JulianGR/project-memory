@@ -10,38 +10,10 @@
   "homepage": "https://github.com/JulianGR/project-memory",
   "repository": "https://github.com/JulianGR/project-memory",
   "license": "MIT",
-  "keywords": ["memory", "handoff", "project-context"],
-  "skills": "./skills/",
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" session-start --host claude"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" stop --host claude"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" prompt --host claude"
-          }
-        ]
-      }
-    ]
-  }
+  "keywords": [
+    "memory",
+    "handoff",
+    "project-context"
+  ],
+  "skills": "./skills/"
 }
