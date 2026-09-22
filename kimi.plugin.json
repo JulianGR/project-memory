@@ -1,7 +1,7 @@
 {
   "name": "project-memory",
   "version": "1.0.0",
-  "description": "Durable project memory with configurable reminders for Kimi Code CLI.",
+  "description": "Repo-local AGENTS.md memory with every-prompt reminders for Kimi Code CLI.",
   "author": {
     "name": "JulianGR"
   },
@@ -12,7 +12,7 @@
   "interface": {
     "displayName": "Project Memory",
     "shortDescription": "Keep durable project context current.",
-    "longDescription": "Initializes STATUS.md project memory and reminds Kimi to review it.",
+    "longDescription": "Initializes AGENTS.md project memory and reminds Kimi to review durable context every turn.",
     "developerName": "JulianGR",
     "websiteURL": "https://github.com/JulianGR/project-memory"
   },

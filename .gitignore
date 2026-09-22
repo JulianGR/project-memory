@@ -5,7 +5,5 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Runtime state (should never live here, just in case)
-state/
-*.count
-.superpowers/sdd/
+/.project-memory-init.lock
+/.project-memory-*.tmp

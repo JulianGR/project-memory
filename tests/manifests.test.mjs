@@ -10,6 +10,12 @@ async function readJson(path) {
   return JSON.parse(await readFile(join(projectRoot, path), 'utf8'))
 }
 
+function commandFor(hooks, event) {
+  assert.equal(hooks[event].length, 1)
+  assert.equal(hooks[event][0].hooks.length, 1)
+  return hooks[event][0].hooks[0].command
+}
+
 test('installed root provides the Node runtime and every host manifest', async () => {
   await Promise.all([
     access(join(projectRoot, 'bin', 'project-memory.mjs')),
@@ -27,23 +33,25 @@ test('Claude marketplace installs the repository root', async () => {
   assert.equal(marketplace.plugins[0].source, './')
 })
 
-test('Claude manifest registers Claude lifecycle hooks', async () => {
+test('Claude manifest registers SessionStart, UserPromptSubmit, and Stop hooks', async () => {
   const manifest = await readJson('.claude-plugin/plugin.json')
   assert.equal(manifest.name, 'project-memory')
-  assert.equal(manifest.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host claude')
-  assert.equal(manifest.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host claude')
+  assert.equal(commandFor(manifest.hooks, 'SessionStart'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host claude')
+  assert.equal(commandFor(manifest.hooks, 'UserPromptSubmit'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host claude')
+  assert.equal(commandFor(manifest.hooks, 'Stop'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" stop --host claude')
 })
 
-test('Codex manifest exposes default-discovered Codex hooks', async () => {
+test('Codex manifest exposes SessionStart, UserPromptSubmit, and Stop hooks through default discovery', async () => {
   const manifest = await readJson('.codex-plugin/plugin.json')
   const hooks = await readJson('hooks/hooks.json')
   assert.equal(manifest.name, 'project-memory')
   assert.equal(manifest.hooks, undefined)
-  assert.equal(hooks.hooks.SessionStart[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host codex')
-  assert.equal(hooks.hooks.UserPromptSubmit[0].hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host codex')
+  assert.equal(commandFor(hooks.hooks, 'SessionStart'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" session-start --host codex')
+  assert.equal(commandFor(hooks.hooks, 'UserPromptSubmit'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" prompt --host codex')
+  assert.equal(commandFor(hooks.hooks, 'Stop'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" stop --host codex')
 })
 
-test('Kimi manifest declares the two lifecycle hooks', async () => {
+test('Kimi manifest declares exactly the existing two lifecycle hooks without Stop', async () => {
   const manifest = await readJson('kimi.plugin.json')
   assert.equal(manifest.skills, './skills/')
   assert.deepEqual(manifest.hooks.map(({ event }) => event), ['SessionStart', 'UserPromptSubmit'])
@@ -51,6 +59,7 @@ test('Kimi manifest declares the two lifecycle hooks', async () => {
     'node ./bin/project-memory.mjs session-start --host kimi',
     'node ./bin/project-memory.mjs prompt --host kimi'
   ])
+  assert.equal(manifest.hooks.some(({ event }) => event === 'Stop'), false)
   assert.ok(manifest.hooks.every(({ timeout }) => Number.isInteger(timeout) && timeout > 0))
 })
 

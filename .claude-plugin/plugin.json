@@ -2,7 +2,7 @@
   "name": "project-memory",
   "displayName": "Project Memory",
   "version": "1.0.0",
-  "description": "Durable project memory with configurable reminders for Claude Code.",
+  "description": "Repo-local AGENTS.md memory with a relevance review every turn for Claude Code.",
   "author": {
     "name": "JulianGR",
     "url": "https://github.com/JulianGR"
@@ -19,6 +19,16 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" session-start --host claude"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs\" stop --host claude"
           }
         ]
       }

@@ -1,7 +1,7 @@
 {
   "name": "project-memory",
-  "version": "1.0.0",
-  "description": "Durable project memory with configurable reminders for Codex.",
+  "version": "1.0.0+codex.20260922092121",
+  "description": "Repo-local AGENTS.md memory with a relevance review every turn for Codex.",
   "author": {
     "name": "JulianGR",
     "url": "https://github.com/JulianGR"
@@ -9,15 +9,22 @@
   "homepage": "https://github.com/JulianGR/project-memory",
   "repository": "https://github.com/JulianGR/project-memory",
   "license": "MIT",
-  "keywords": ["memory", "handoff", "project-context"],
+  "keywords": [
+    "memory",
+    "handoff",
+    "project-context"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Project Memory",
     "shortDescription": "Keep durable project context current.",
-    "longDescription": "Initializes STATUS.md project memory and shows periodic Codex checkpoints.",
+    "longDescription": "Maintains consolidated project state and decision rationale in AGENTS.md, with a review each turn and writes only for relevant changes.",
     "developerName": "JulianGR",
     "category": "Productivity",
-    "capabilities": ["Project memory", "Session checkpoints"],
+    "capabilities": [
+      "Project memory",
+      "Turn-end review"
+    ],
     "defaultPrompt": "Initialize durable project memory in this project."
   }
 }

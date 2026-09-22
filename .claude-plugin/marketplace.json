@@ -8,7 +8,7 @@
     {
       "name": "project-memory",
       "source": "./",
-      "description": "Initialize durable project memory and remind agents to review it on a configurable cadence.",
+      "description": "Keep project memory in AGENTS.md with a relevance review every turn.",
       "category": "productivity"
     }
   ]

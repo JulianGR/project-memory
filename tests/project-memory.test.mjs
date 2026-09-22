@@ -1,41 +1,43 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { cp, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { formatReminder, initializeProject, recordPrompt } from '../lib/project-memory.mjs'
+import { initializeProject, isInitialized } from '../lib/project-memory.mjs'
 
 const testDirectory = dirname(fileURLToPath(import.meta.url))
 const projectRoot = join(testDirectory, '..')
 const cliPath = join(projectRoot, 'bin', 'project-memory.mjs')
-const reminder = 'Project memory checkpoint due: update STATUS.md if durable work changed.'
+const policyStart = '<!-- project-memory:policy:start -->'
+const policyEnd = '<!-- project-memory:policy:end -->'
+const stateStart = '<!-- project-memory:state:start -->'
+const stateEnd = '<!-- project-memory:state:end -->'
+const markers = [policyStart, policyEnd, stateStart, stateEnd]
 
-function runCli(args, event, environment = {}) {
-  const { AGENT_MEMORY_HOME, AGENT_MEMORY_INTERVAL, AUTO_UPDATE_CLAUDE_N, ...baseEnvironment } = process.env
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, ...args], {
-      cwd: projectRoot,
-      env: { ...baseEnvironment, ...environment },
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-    let output = ''
-    let errors = ''
-    child.stdout.on('data', (chunk) => { output += chunk })
-    child.stderr.on('data', (chunk) => { errors += chunk })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ code, output, errors }))
-    child.stdin.end(JSON.stringify(event))
-  })
+async function temporaryDirectory(t, prefix) {
+  const root = await mkdtemp(join(tmpdir(), prefix))
+  const tempRoot = resolve(tmpdir()).toLowerCase()
+  const candidate = resolve(root).toLowerCase()
+  assert.equal(candidate.startsWith(`${tempRoot}${sep}`.toLowerCase()), true)
+  t.after(() => rm(root, { recursive: true, force: true }))
+  return root
 }
 
-function runCliInput(args, input, environment = {}) {
-  const { AGENT_MEMORY_HOME, AGENT_MEMORY_INTERVAL, AUTO_UPDATE_CLAUDE_N, ...baseEnvironment } = process.env
+function runCli(args, event) {
+  return runCliInput(args, JSON.stringify(event))
+}
+
+function runCliInput(args, input) {
+  return runCliAt(cliPath, projectRoot, args, input)
+}
+
+function runCliAt(binary, cwd, args, input) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [cliPath, ...args], {
-      cwd: projectRoot,
-      env: { ...baseEnvironment, ...environment },
+    const child = spawn(process.execPath, [binary, ...args], {
+      cwd,
+      env: { ...process.env },
       stdio: ['pipe', 'pipe', 'pipe']
     })
     let output = ''
@@ -48,195 +50,215 @@ function runCliInput(args, input, environment = {}) {
   })
 }
 
-function runCliAt(binary, cwd, args, event, environment = {}) {
-  const { AGENT_MEMORY_HOME, AGENT_MEMORY_INTERVAL, AUTO_UPDATE_CLAUDE_N, ...baseEnvironment } = process.env
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [binary, ...args], {
-      cwd,
-      env: { ...baseEnvironment, ...environment },
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-    let output = ''
-    let errors = ''
-    child.stdout.on('data', (chunk) => { output += chunk })
-    child.stderr.on('data', (chunk) => { errors += chunk })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ code, output, errors }))
-    child.stdin.end(JSON.stringify(event))
-  })
+function markerCount(content, marker) {
+  return content.split(marker).length - 1
 }
 
-test('initializeProject creates STATUS.md and identical pointer files', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-'))
-  const result = await initializeProject(root)
-  const agents = await readFile(join(root, 'AGENTS.md'))
-  const claude = await readFile(join(root, 'CLAUDE.md'))
-  const status = await readFile(join(root, 'STATUS.md'), 'utf8')
-
-  assert.deepEqual(result.existing, { status: false, agents: false, claude: false })
-  assert.deepEqual(agents, claude)
-  assert.match(status, /## Current state/)
-})
-
-test('initializeProject preserves existing project memory files', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-'))
-  await writeFile(join(root, 'STATUS.md'), 'status before', 'utf8')
-  await writeFile(join(root, 'AGENTS.md'), 'agents before', 'utf8')
-  await writeFile(join(root, 'CLAUDE.md'), 'claude before', 'utf8')
-
-  const result = await initializeProject(root)
-
-  assert.deepEqual(result.existing, { status: true, agents: true, claude: true })
-  assert.equal(await readFile(join(root, 'STATUS.md'), 'utf8'), 'status before')
-  assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), 'agents before')
-  assert.equal(await readFile(join(root, 'CLAUDE.md'), 'utf8'), 'claude before')
-})
-
-test('recordPrompt emits a reminder only at the configured interval', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const event = { cwd: '/repo', session_id: 's1' }
-
-  assert.equal((await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })).due, false)
-  assert.equal((await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })).due, false)
-  assert.equal((await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })).due, false)
-  assert.equal((await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })).due, true)
-})
-
-test('recordPrompt keeps counters isolated by session id', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const first = { cwd: '/repo', session_id: 's1' }
-  const second = { cwd: '/repo', session_id: 's2' }
-
-  await recordPrompt({ host: 'kimi', event: first, stateRoot, interval: 2 })
-  assert.equal((await recordPrompt({ host: 'kimi', event: second, stateRoot, interval: 2 })).count, 1)
-  assert.equal((await recordPrompt({ host: 'kimi', event: first, stateRoot, interval: 2 })).due, true)
-})
-
-test('recordPrompt keeps counters isolated by host and project path', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const first = { cwd: 'C:\\work\\first', session_id: 's1' }
-  const second = { cwd: 'C:\\work\\second', session_id: 's1' }
-
-  await recordPrompt({ host: 'claude', event: first, stateRoot, interval: 2 })
-  assert.equal((await recordPrompt({ host: 'kimi', event: first, stateRoot, interval: 2 })).count, 1)
-  assert.equal((await recordPrompt({ host: 'claude', event: second, stateRoot, interval: 2 })).count, 1)
-})
-
-test('recordPrompt treats equivalent Windows project paths as one counter', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const relativeRoot = relative(process.cwd(), root)
-  const alternateRoot = `${root[0].toLowerCase()}${root.slice(1).replaceAll('\\', '/')}/`
-  const event = { session_id: 's1' }
-
-  assert.equal((await recordPrompt({ host: 'claude', event: { ...event, cwd: root }, stateRoot, interval: 3 })).count, 1)
-  assert.equal((await recordPrompt({ host: 'claude', event: { ...event, cwd: alternateRoot }, stateRoot, interval: 3 })).count, 2)
-  assert.equal((await recordPrompt({ host: 'claude', event: { ...event, cwd: relativeRoot.split(sep).join('\\') }, stateRoot, interval: 3 })).count, 3)
-})
-
-function ordinals(files) {
-  return files.filter((file) => /^\d+\.event$/.test(file)).map((file) => Number(file.slice(0, -'.event'.length))).sort((first, second) => first - second)
+function assertMarkers(content) {
+  for (const marker of markers) assert.equal(markerCount(content, marker), 1)
+  const positions = markers.map((marker) => content.indexOf(marker))
+  assert.deepEqual([...positions].sort((first, second) => first - second), positions)
 }
 
-test('independent prompt processes assign every ordinal and emit every interval-one reminder', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const environment = { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '1' }
-  const event = { cwd: root, session_id: 's1' }
+function hookOutput(result, eventName) {
+  assert.equal(result.code, 0)
+  assert.equal(result.errors, '')
+  const payload = JSON.parse(result.output)
+  assert.deepEqual(Object.keys(payload), ['hookSpecificOutput'])
+  assert.deepEqual(Object.keys(payload.hookSpecificOutput).sort(), ['additionalContext', 'hookEventName'])
+  assert.equal(payload.hookSpecificOutput.hookEventName, eventName)
+  assert.equal(typeof payload.hookSpecificOutput.additionalContext, 'string')
+  assert.match(payload.hookSpecificOutput.additionalContext, /AGENTS\.md/)
+  return payload
+}
 
-  await runCli(['init'], event, environment)
-  await writeFile(join(stateRoot, 'legacy-state.json'), '{"count":1}', 'utf8')
+async function installedBinary(t) {
+  const cacheRoot = await temporaryDirectory(t, 'agent-memory-cache-')
+  const installedRoot = join(cacheRoot, 'project-memory')
+  await mkdir(installedRoot)
+  await Promise.all(['bin', 'lib', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
+  return join(installedRoot, 'bin', 'project-memory.mjs')
+}
 
-  const results = await Promise.all(Array.from({ length: 40 }, () => runCli(['prompt', '--host', 'claude'], event, environment)))
+test('initializeProject creates only AGENTS.md with the four protocol markers', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
 
-  assert.ok(results.every((result) => result.code === 0 && result.errors === ''))
-  const [eventDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.events'))
-  assert.deepEqual(ordinals(await readdir(join(stateRoot, eventDirectory))), Array.from({ length: 40 }, (_, index) => index + 1))
-  assert.equal(results.filter((result) => result.output === `${reminder}\n`).length, 40)
-  assert.deepEqual((await readdir(stateRoot)).filter((file) => file.endsWith('.due')), [])
+  const result = await initializeProject(root)
+  const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
+
+  assert.deepEqual(result, { existing: { agents: false }, updated: true })
+  assertMarkers(agents)
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
 })
 
-test('independent prompt processes emit exactly one reminder for every fourth ordinal', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const environment = { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '4' }
-  const event = { cwd: root, session_id: 's1' }
+test('initializeProject preserves existing instructions and does not import NOTES.md', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  const original = 'Local instructions that must remain intact.\n'
+  const notes = 'This unrelated file must not become project memory.\n'
+  await writeFile(join(root, 'AGENTS.md'), original, 'utf8')
+  await writeFile(join(root, 'NOTES.md'), notes, 'utf8')
 
-  await runCli(['init'], event, environment)
-  const results = await Promise.all(Array.from({ length: 20 }, () => runCli(['prompt', '--host', 'claude'], event, environment)))
+  const result = await initializeProject(root)
+  const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
 
-  assert.ok(results.every((result) => result.code === 0 && result.errors === ''))
-  const [eventDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.events'))
-  assert.deepEqual(ordinals(await readdir(join(stateRoot, eventDirectory))), Array.from({ length: 20 }, (_, index) => index + 1))
-  assert.equal(results.filter((result) => result.output === `${reminder}\n`).length, 5)
+  assert.deepEqual(result, { existing: { agents: true }, updated: true })
+  assert.equal(agents.startsWith(original), true)
+  assert.equal(agents.includes(notes), false)
+  assertMarkers(agents)
+  assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes)
+  assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'NOTES.md'])
 })
 
-test('independent prompt processes apply interval changes to their own ordinals', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const event = { cwd: root, session_id: 's1' }
+test('initializeProject is a byte and mtime no-op for initialized AGENTS.md', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  await initializeProject(root)
+  const agentsPath = join(root, 'AGENTS.md')
+  const knownTime = new Date('2000-01-02T03:04:05.000Z')
+  await utimes(agentsPath, knownTime, knownTime)
+  const before = await stat(agentsPath, { bigint: true })
+  const content = await readFile(agentsPath)
 
-  await runCli(['init'], event, { AGENT_MEMORY_HOME: stateRoot })
-  const results = []
-  for (const interval of ['4', '4', '4', '4', '2', '2']) {
-    results.push(await runCli(['prompt', '--host', 'claude'], event, { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: interval }))
-  }
+  const result = await initializeProject(root)
+  const after = await stat(agentsPath, { bigint: true })
 
-  assert.ok(results.every((result) => result.code === 0 && result.errors === ''))
-  assert.deepEqual(results.map((result) => result.output), ['', '', '', `${reminder}\n`, '', `${reminder}\n`])
-  const [eventDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.events'))
-  assert.deepEqual(ordinals(await readdir(join(stateRoot, eventDirectory))), [1, 2, 3, 4, 5, 6])
+  assert.deepEqual(result, { existing: { agents: true }, updated: false })
+  assert.deepEqual(await readFile(agentsPath), content)
+  assert.equal(after.mtimeNs, before.mtimeNs)
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
 })
 
-test('recordPrompt preserves event records when a stale state artifact is malformed', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const event = { cwd: 'C:\\work\\project', session_id: 's1' }
-  await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 })
-  const [eventDirectory] = (await readdir(stateRoot)).filter((file) => file.endsWith('.events'))
-  await writeFile(join(stateRoot, `${eventDirectory.slice(0, -'.events'.length)}.json`), '{', 'utf8')
+test('isInitialized requires four unique ordered markers and rejects arbitrary instructions', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  await writeFile(join(root, 'AGENTS.md'), 'arbitrary instructions', 'utf8')
+  assert.equal(await isInitialized(root), false)
 
-  assert.deepEqual(await recordPrompt({ host: 'claude', event, stateRoot, interval: 4 }), { count: 2, due: false, interval: 4 })
-  assert.equal((await readdir(join(stateRoot, eventDirectory))).length, 2)
-})
+  await initializeProject(root)
+  const valid = await readFile(join(root, 'AGENTS.md'), 'utf8')
+  assert.equal(await isInitialized(root), true)
 
-test('recordPrompt rejects missing required hook fields', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-
-  await assert.rejects(recordPrompt({ host: 'claude', event: { session_id: 's1' }, stateRoot }), /cwd/)
-  await assert.rejects(recordPrompt({ host: 'claude', event: { cwd: 'C:\\work\\project' }, stateRoot }), /session_id/)
-  assert.deepEqual(await readdir(stateRoot), [])
-})
-
-test('formatReminder uses host-appropriate output', () => {
-  assert.deepEqual(JSON.parse(formatReminder('codex', { count: 4, interval: 4 })), { systemMessage: reminder })
-  assert.equal(formatReminder('claude', { count: 4, interval: 4 }), reminder)
-  assert.equal(formatReminder('kimi', { count: 4, interval: 4 }), reminder)
-})
-
-test('prompt marker initializes only the exact literal across supported payload fields', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
   const cases = [
-    { host: 'claude', event: { prompt: 'agent-memory:init' }, output: 'Project memory initialized.\n' },
-    { host: 'codex', event: { user_prompt: 'agent-memory:init' }, output: '{"systemMessage":"Project memory initialized."}\n' },
-    { host: 'kimi', event: { userPrompt: 'agent-memory:init' }, output: 'Project memory initialized.\n' },
-    { host: 'claude', event: { message: 'agent-memory:init' }, output: 'Project memory initialized.\n' },
-    { host: 'codex', event: { input: 'agent-memory:init' }, output: '{"systemMessage":"Project memory initialized."}\n' }
+    valid.replace(stateEnd, `${stateEnd}\n${stateEnd}`),
+    `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`,
+    `${policyStart}\n${policyEnd}\n${stateStart}\n`
+  ]
+  for (const content of cases) {
+    await writeFile(join(root, 'AGENTS.md'), content, 'utf8')
+    assert.equal(await isInitialized(root), false)
+  }
+})
+
+test('initializeProject rejects partial markers without mutating files', async (t) => {
+  const partialDocuments = [
+    `${policyStart}\npartial\n${policyEnd}\n`,
+    `${stateStart}\npartial\n${stateEnd}\n`,
+    `${policyStart}\npartial\n${stateStart}\npartial\n${stateEnd}\n`
   ]
 
-  for (const { host, event, output } of cases) {
-    const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-    const result = await runCli(['prompt', '--host', host], { cwd: root, session_id: `${host}-session`, ...event }, { AGENT_MEMORY_HOME: stateRoot })
-    assert.deepEqual(result, { code: 0, output, errors: '' })
-    assert.equal(await readFile(join(root, 'STATUS.md'), 'utf8').then(() => true), true)
-    assert.deepEqual(await readFile(join(root, 'AGENTS.md')), await readFile(join(root, 'CLAUDE.md')))
-    const cadence = await runCli(['prompt', '--host', host], { cwd: root, session_id: `${host}-session`, prompt: 'ordinary prompt' }, { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '1' })
-    assert.equal(cadence.output, host === 'codex' ? `{\"systemMessage\":\"${reminder}\"}\n` : `${reminder}\n`)
-  }
+  for (const partial of partialDocuments) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    const notes = 'Keep this unrelated file unchanged.\n'
+    await writeFile(join(root, 'AGENTS.md'), partial, 'utf8')
+    await writeFile(join(root, 'NOTES.md'), notes, 'utf8')
+    const before = await Promise.all(['AGENTS.md', 'NOTES.md'].map((file) => readFile(join(root, file), 'utf8')))
 
+    await assert.rejects(initializeProject(root))
+
+    const after = await Promise.all(['AGENTS.md', 'NOTES.md'].map((file) => readFile(join(root, file), 'utf8')))
+    assert.deepEqual(after, before)
+    assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'NOTES.md'])
+  }
 })
 
-test('prompt marker rejects non-exact values without creating project files', async () => {
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
+test('concurrent initialization writes one complete AGENTS.md document', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  const results = await Promise.all(Array.from({ length: 8 }, () => initializeProject(root)))
+
+  assert.equal(results.filter(({ updated }) => updated).length, 1)
+  assert.equal(results.filter(({ existing }) => existing.agents === false).length, 1)
+  for (const result of results) assert.deepEqual(Object.keys(result).sort(), ['existing', 'updated'])
+  assert.equal(await isInitialized(root), true)
+  assertMarkers(await readFile(join(root, 'AGENTS.md'), 'utf8'))
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
+})
+
+test('explicit init and status diagnose only the target project', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+
+  const before = await runCli(['status'], { cwd: root })
+  const init = await runCli(['init'], { cwd: root })
+  const after = await runCli(['status'], { cwd: root })
+
+  assert.deepEqual(JSON.parse(before.output), { initialized: false })
+  assert.equal(init.code, 0)
+  assert.equal(init.errors, '')
+  assert.deepEqual(JSON.parse(init.output), { existing: { agents: false }, updated: true })
+  assert.deepEqual(JSON.parse(after.output), { initialized: true })
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
+})
+
+test('explicit commands fail with code one for malformed input or missing cwd', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  for (const command of ['init', 'status']) {
+    const malformed = await runCliInput([command], '{')
+    const missing = await runCli([command], { cwd: '' })
+    assert.equal(malformed.code, 1)
+    assert.notEqual(malformed.errors, '')
+    assert.equal(missing.code, 1)
+    assert.notEqual(missing.errors, '')
+  }
+
+  const unknown = await runCliInput(['unknown'], '{}')
+  assert.equal(unknown.code, 1)
+  assert.notEqual(unknown.errors, '')
+  assert.deepEqual(await readdir(root), [])
+})
+
+test('lifecycle commands fail open for malformed input without mutating initialized files', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  await initializeProject(root)
+  const before = await readFile(join(root, 'AGENTS.md'))
+
+  for (const command of ['session-start', 'prompt', 'stop']) {
+    const malformed = await runCliInput([command, '--host', 'codex'], '{')
+    const missingCwd = await runCli([command, '--host', 'codex'], { session_id: 'not-required' })
+    const invalidObject = await runCliInput([command, '--host', 'codex'], '[]')
+    assert.deepEqual(malformed, { code: 0, output: '', errors: '' })
+    assert.deepEqual(missingCwd, { code: 0, output: '', errors: '' })
+    assert.deepEqual(invalidObject, { code: 0, output: '', errors: '' })
+  }
+
+  assert.deepEqual(await readFile(join(root, 'AGENTS.md')), before)
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
+})
+
+test('the exact initialization literal works in every supported event field', async (t) => {
+  const fields = ['prompt', 'user_prompt', 'userPrompt', 'message', 'input']
+  for (const field of fields) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    const result = await runCli(['prompt', '--host', 'kimi'], { cwd: root, [field]: 'agent-memory:init' })
+    const status = await runCli(['status'], { cwd: root })
+
+    assert.equal(result.code, 0)
+    assert.equal(result.errors, '')
+    assert.match(result.output, /Project memory initialized in AGENTS\.md/)
+    assert.deepEqual(JSON.parse(status.output), { initialized: true })
+    assertMarkers(await readFile(join(root, 'AGENTS.md'), 'utf8'))
+    assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  }
+})
+
+test('the initialization literal uses structured UserPromptSubmit output for Claude and Codex', async (t) => {
+  for (const host of ['claude', 'codex']) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    const result = await runCli(['prompt', '--host', host], { cwd: root, prompt: 'agent-memory:init' })
+    const payload = hookOutput(result, 'UserPromptSubmit')
+
+    assert.match(payload.hookSpecificOutput.additionalContext, /Project memory initialized in AGENTS\.md/)
+    assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  }
+})
+
+test('non-exact initialization values do not opt a project in', async (t) => {
   const cases = [
     { prompt: 'AGENT-MEMORY:INIT' },
     { user_prompt: 'Agent-memory:init' },
@@ -247,143 +269,155 @@ test('prompt marker rejects non-exact values without creating project files', as
     { prompt: 'ordinary user prompt' }
   ]
 
-  for (const event of cases) {
-    const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-    const result = await runCli(['prompt', '--host', 'claude'], { cwd: root, session_id: 'ordinary', ...event }, { AGENT_MEMORY_HOME: stateRoot })
+  for (const fields of cases) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    const result = await runCli(['prompt', '--host', 'kimi'], { cwd: root, ...fields })
+    const status = await runCli(['status'], { cwd: root })
+
     assert.deepEqual(result, { code: 0, output: '', errors: '' })
-    await assert.rejects(readFile(join(root, 'STATUS.md')))
-    await assert.rejects(readFile(join(root, 'AGENTS.md')))
-    await assert.rejects(readFile(join(root, 'CLAUDE.md')))
+    assert.deepEqual(JSON.parse(status.output), { initialized: false })
+    assert.deepEqual(await readdir(root), [])
   }
 })
 
-test('installed cache prompt marker preserves existing project memory', async () => {
-  const cacheRoot = await mkdtemp(join(tmpdir(), 'agent-memory-cache-'))
-  const installedRoot = join(cacheRoot, 'project-memory')
-  const targetRoot = await mkdtemp(join(tmpdir(), 'agent-memory-target-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  await mkdir(installedRoot)
-  await Promise.all(['bin', 'lib', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
-  await writeFile(join(targetRoot, 'STATUS.md'), 'existing status', 'utf8')
-  await writeFile(join(targetRoot, 'AGENTS.md'), 'existing agents', 'utf8')
-  await writeFile(join(targetRoot, 'CLAUDE.md'), 'existing claude', 'utf8')
+test('ordinary lifecycle hooks stay silent and create no files in an uninitialized project', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  const event = { cwd: root, prompt: 'ordinary prompt' }
 
-  const result = await runCliAt(join(installedRoot, 'bin', 'project-memory.mjs'), targetRoot, ['prompt', '--host', 'codex'], { cwd: targetRoot, session_id: 'cache-session', message: 'agent-memory:init' }, { AGENT_MEMORY_HOME: stateRoot })
+  for (const host of ['claude', 'codex', 'kimi']) {
+    for (const command of ['session-start', 'prompt', 'stop']) {
+      const result = await runCli([command, '--host', host], event)
+      assert.deepEqual(result, { code: 0, output: '', errors: '' })
+    }
+  }
 
-  assert.deepEqual(result, { code: 0, output: '{"systemMessage":"Project memory initialized."}\n', errors: '' })
-  assert.equal(await readFile(join(targetRoot, 'STATUS.md'), 'utf8'), 'existing status')
-  assert.equal(await readFile(join(targetRoot, 'AGENTS.md'), 'utf8'), 'existing agents')
-  assert.equal(await readFile(join(targetRoot, 'CLAUDE.md'), 'utf8'), 'existing claude')
+  assert.deepEqual(await readdir(root), [])
 })
 
-test('installed cache prompt marker creates byte-identical pointer files in its target project', async () => {
-  const cacheRoot = await mkdtemp(join(tmpdir(), 'agent-memory-cache-'))
-  const installedRoot = join(cacheRoot, 'project-memory')
-  const targetRoot = await mkdtemp(join(tmpdir(), 'agent-memory-target-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  await mkdir(installedRoot)
-  await Promise.all(['bin', 'lib', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
+test('an arbitrary AGENTS.md does not opt a project into lifecycle hooks', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  const original = 'Arbitrary project instructions without project-memory markers.\n'
+  await writeFile(join(root, 'AGENTS.md'), original, 'utf8')
 
-  const result = await runCliAt(join(installedRoot, 'bin', 'project-memory.mjs'), targetRoot, ['prompt', '--host', 'kimi'], { cwd: targetRoot, session_id: 'cache-session', input: 'agent-memory:init' }, { AGENT_MEMORY_HOME: stateRoot })
+  for (const host of ['claude', 'codex', 'kimi']) {
+    for (const command of ['session-start', 'prompt', 'stop']) {
+      const result = await runCli([command, '--host', host], { cwd: root })
+      assert.deepEqual(result, { code: 0, output: '', errors: '' })
+    }
+  }
 
-  assert.deepEqual(result, { code: 0, output: 'Project memory initialized.\n', errors: '' })
-  assert.match(await readFile(join(targetRoot, 'STATUS.md'), 'utf8'), /## Current state/)
-  assert.deepEqual(await readFile(join(targetRoot, 'AGENTS.md')), await readFile(join(targetRoot, 'CLAUDE.md')))
+  assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), original)
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
 })
 
-test('prompt command stays silent until the project is initialized', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const environment = { AGENT_MEMORY_HOME: stateRoot }
-  const event = { cwd: root, session_id: 's1' }
+test('ordinary lifecycle hooks preserve AGENTS.md bytes and mtime', async (t) => {
+  for (const host of ['claude', 'codex', 'kimi']) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    await initializeProject(root)
+    const agentsPath = join(root, 'AGENTS.md')
+    const knownTime = new Date('2000-01-02T03:04:05.000Z')
+    await utimes(agentsPath, knownTime, knownTime)
+    const beforeContent = await readFile(agentsPath)
+    const beforeStat = await stat(agentsPath, { bigint: true })
 
-  const prompt = await runCli(['prompt', '--host', 'claude'], event, environment)
-  const sessionStart = await runCli(['session-start', '--host', 'claude'], event, environment)
-  const initialization = await runCli(['init'], event, environment)
-  const status = await runCli(['status'], event, environment)
+    for (const command of ['session-start', 'prompt', 'stop']) {
+      const result = await runCli([command, '--host', host], { cwd: root, prompt: 'ordinary prompt' })
+      assert.equal(result.code, 0)
+    }
 
-  assert.deepEqual(prompt, { code: 0, output: '', errors: '' })
-  assert.deepEqual(sessionStart, { code: 0, output: '', errors: '' })
-  assert.equal(initialization.code, 0)
+    assert.deepEqual(await readFile(agentsPath), beforeContent)
+    assert.equal((await stat(agentsPath, { bigint: true })).mtimeNs, beforeStat.mtimeNs)
+  }
+})
+
+test('Claude and Codex lifecycle output is structured and always references AGENTS.md', async (t) => {
+  for (const host of ['claude', 'codex']) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    await initializeProject(root)
+
+    hookOutput(await runCli(['session-start', '--host', host], { cwd: root }), 'SessionStart')
+    const firstPrompt = hookOutput(await runCli(['prompt', '--host', host], { cwd: root, prompt: 'ordinary prompt' }), 'UserPromptSubmit')
+    const secondPrompt = hookOutput(await runCli(['prompt', '--host', host], { cwd: root, prompt: 'ordinary prompt' }), 'UserPromptSubmit')
+
+    assert.equal(firstPrompt.hookSpecificOutput.additionalContext, secondPrompt.hookSpecificOutput.additionalContext)
+    assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  }
+})
+
+test('Kimi lifecycle output is plain text and prompts always include the reminder', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  await initializeProject(root)
+
+  const session = await runCli(['session-start', '--host', 'kimi'], { cwd: root })
+  const firstPrompt = await runCli(['prompt', '--host', 'kimi'], { cwd: root })
+  const secondPrompt = await runCli(['prompt', '--host', 'kimi'], { cwd: root })
+
+  assert.equal(session.code, 0)
+  assert.equal(session.errors, '')
+  assert.match(session.output, /AGENTS\.md/)
+  assert.match(firstPrompt.output, /AGENTS\.md/)
+  assert.equal(firstPrompt.output, secondPrompt.output)
+  assert.equal(firstPrompt.output.trim().startsWith('{'), false)
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
+})
+
+test('Stop blocks Claude and Codex for initialized projects and avoids the stop hook loop', async (t) => {
+  for (const host of ['claude', 'codex']) {
+    const root = await temporaryDirectory(t, 'agent-memory-project-')
+    await initializeProject(root)
+
+    const stop = await runCli(['stop', '--host', host], { cwd: root })
+    const payload = JSON.parse(stop.output)
+    assert.equal(stop.code, 0)
+    assert.equal(stop.errors, '')
+    assert.equal(payload.decision, 'block')
+    assert.match(payload.reason, /AGENTS\.md/)
+
+    const active = await runCli(['stop', '--host', host], { cwd: root, stop_hook_active: true })
+    assert.deepEqual(active, { code: 0, output: '', errors: '' })
+    assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  }
+})
+
+test('Kimi Stop is silent for initialized projects', async (t) => {
+  const root = await temporaryDirectory(t, 'agent-memory-project-')
+  await initializeProject(root)
+
+  const result = await runCli(['stop', '--host', 'kimi'], { cwd: root })
+
+  assert.deepEqual(result, { code: 0, output: '', errors: '' })
+  assert.deepEqual(await readdir(root), ['AGENTS.md'])
+})
+
+test('installed cache initializes only its temporary target project', async (t) => {
+  const binary = await installedBinary(t)
+  const targetRoot = await temporaryDirectory(t, 'agent-memory-target-')
+  const result = await runCliAt(binary, targetRoot, ['prompt', '--host', 'kimi'], JSON.stringify({ cwd: targetRoot, input: 'agent-memory:init' }))
+  const status = await runCliAt(binary, targetRoot, ['status'], JSON.stringify({ cwd: targetRoot }))
+
+  assert.equal(result.code, 0)
+  assert.equal(result.errors, '')
+  assert.match(result.output, /Project memory initialized in AGENTS\.md/)
   assert.deepEqual(JSON.parse(status.output), { initialized: true })
+  assertMarkers(await readFile(join(targetRoot, 'AGENTS.md'), 'utf8'))
+  assert.deepEqual(await readdir(targetRoot), ['AGENTS.md'])
 })
 
-test('prompt command uses the default interval and legacy interval', async () => {
-  const defaultRoot = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const defaultStateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const defaultEvent = { cwd: defaultRoot, session_id: 's1' }
-  const defaultEnvironment = { AGENT_MEMORY_HOME: defaultStateRoot }
+test('installed cache preserves existing instructions and arbitrary NOTES.md', async (t) => {
+  const binary = await installedBinary(t)
+  const targetRoot = await temporaryDirectory(t, 'agent-memory-target-')
+  const original = 'Keep these target instructions unchanged.\n'
+  const notes = 'Keep this unrelated target note unchanged.\n'
+  await writeFile(join(targetRoot, 'AGENTS.md'), original, 'utf8')
+  await writeFile(join(targetRoot, 'NOTES.md'), notes, 'utf8')
 
-  await runCli(['init'], defaultEvent, defaultEnvironment)
-  for (let index = 0; index < 3; index += 1) {
-    assert.equal((await runCli(['prompt', '--host', 'kimi'], defaultEvent, defaultEnvironment)).output, '')
-  }
-  assert.equal((await runCli(['prompt', '--host', 'kimi'], defaultEvent, defaultEnvironment)).output, `${reminder}\n`)
+  const result = await runCliAt(binary, targetRoot, ['init'], JSON.stringify({ cwd: targetRoot }))
+  const agents = await readFile(join(targetRoot, 'AGENTS.md'), 'utf8')
 
-  const legacyRoot = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const legacyStateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const legacyEvent = { cwd: legacyRoot, session_id: 's1' }
-  const legacyEnvironment = { AGENT_MEMORY_HOME: legacyStateRoot, AUTO_UPDATE_CLAUDE_N: '3' }
-
-  await runCli(['init'], legacyEvent, legacyEnvironment)
-  assert.equal((await runCli(['prompt', '--host', 'codex'], legacyEvent, legacyEnvironment)).output, '')
-  assert.equal((await runCli(['prompt', '--host', 'codex'], legacyEvent, legacyEnvironment)).output, '')
-  assert.deepEqual(JSON.parse((await runCli(['prompt', '--host', 'codex'], legacyEvent, legacyEnvironment)).output), { systemMessage: reminder })
-})
-
-test('AGENT_MEMORY_INTERVAL overrides the legacy interval', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const event = { cwd: root, session_id: 's1' }
-  const environment = { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '2', AUTO_UPDATE_CLAUDE_N: '3' }
-
-  await runCli(['init'], event, environment)
-  assert.equal((await runCli(['prompt', '--host', 'codex'], event, environment)).output, '')
-  assert.deepEqual(JSON.parse((await runCli(['prompt', '--host', 'codex'], event, environment)).output), { systemMessage: reminder })
-})
-
-test('invalid interval values fall back to the next configured source or default', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const event = { cwd: root, session_id: 's1' }
-
-  await runCli(['init'], event, { AGENT_MEMORY_HOME: stateRoot })
-  const legacyEnvironment = { AGENT_MEMORY_HOME: stateRoot, AGENT_MEMORY_INTERVAL: '2junk', AUTO_UPDATE_CLAUDE_N: '3' }
-  assert.equal((await runCli(['prompt'], event, legacyEnvironment)).output, '')
-  assert.equal((await runCli(['prompt'], event, legacyEnvironment)).output, '')
-  assert.equal((await runCli(['prompt'], event, legacyEnvironment)).output, `${reminder}\n`)
-
-  const defaultRoot = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const defaultStateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  const defaultEvent = { cwd: defaultRoot, session_id: 's1' }
-  const defaultEnvironment = { AGENT_MEMORY_HOME: defaultStateRoot, AGENT_MEMORY_INTERVAL: '1.5', AUTO_UPDATE_CLAUDE_N: '0' }
-  await runCli(['init'], defaultEvent, defaultEnvironment)
-  for (let index = 0; index < 3; index += 1) assert.equal((await runCli(['prompt'], defaultEvent, defaultEnvironment)).output, '')
-  assert.equal((await runCli(['prompt'], defaultEvent, defaultEnvironment)).output, `${reminder}\n`)
-})
-
-test('lifecycle commands fail open for malformed hook input without mutating state', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'agent-memory-project-'))
-  const stateRoot = await mkdtemp(join(tmpdir(), 'agent-memory-state-'))
-  await runCli(['init'], { cwd: root, session_id: 's1' }, { AGENT_MEMORY_HOME: stateRoot })
-  const prompt = await runCliInput(['prompt'], '{', { AGENT_MEMORY_HOME: stateRoot })
-  const missingFields = await runCli(['prompt'], { cwd: root }, { AGENT_MEMORY_HOME: stateRoot })
-
-  assert.deepEqual(prompt, { code: 0, output: '', errors: '' })
-  assert.deepEqual(missingFields, { code: 0, output: '', errors: '' })
-  assert.deepEqual(await readdir(stateRoot), [])
-})
-
-test('explicit CLI commands report malformed input, failures, and unknown commands', async () => {
-  const malformed = await runCliInput(['status'], '{')
-  const unknown = await runCliInput(['unknown'], '{}')
-  const missingRoot = `Z:\\agent-memory-missing-${Date.now()}`
-  const initialization = await runCli(['init'], { cwd: missingRoot, session_id: 's1' })
-
-  assert.equal(malformed.code, 1)
-  assert.notEqual(malformed.errors, '')
-  assert.equal(unknown.code, 1)
-  assert.notEqual(unknown.errors, '')
-  assert.equal(initialization.code, 1)
-  assert.notEqual(initialization.errors, '')
+  assert.deepEqual(JSON.parse(result.output), { existing: { agents: true }, updated: true })
+  assert.equal(agents.startsWith(original), true)
+  assert.equal(agents.includes(notes), false)
+  assertMarkers(agents)
+  assert.equal(await readFile(join(targetRoot, 'NOTES.md'), 'utf8'), notes)
+  assert.deepEqual((await readdir(targetRoot)).sort(), ['AGENTS.md', 'NOTES.md'])
 })
