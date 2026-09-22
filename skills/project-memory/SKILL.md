@@ -1,28 +1,30 @@
 ---
 name: project-memory
-description: Set up or maintain a project's AGENTS.md as consolidated, repo-local memory for session handoffs. Use when asked to install Project Memory, enable it for a project, preserve decisions, or refresh durable context for Claude, Codex, or Kimi. Covers code and non-code work.
+description: Install Project Memory for an agent host or maintain existing project AGENTS.md files as consolidated, repo-local memory. Use when asked to install Project Memory, preserve decisions, or refresh durable context for Claude, Codex, or Kimi. Covers code and non-code work.
 ---
 
 # Project memory
 
-## Set up once
+## Install once for the host
 
-Use setup only when the user asks to install or enable project memory, not for questions about the plugin. Resolve the intended target project from the request or established project context. If it is ambiguous, ask once; never guess an ancestor, home directory, or the plugin checkout itself.
+Install only when the user requests it, not for questions about the plugin. Resolve the host from the request or current session. Follow the local-repository instructions in `<plugin-root>/README.md`, resolving the plugin root from this skill's location. In Codex, install for the current user so the hook applies across their projects. Other hosts require their own installation. Do not bypass host trust or permission checks or register duplicate hooks in user or project settings.
 
-Resolve the plugin root from this skill's location. If host installation is needed, follow the local-repository steps in `<plugin-root>/README.md` for the chosen host. Do not register duplicate hooks in user or project settings, and do not bypass host trust or permission checks.
+No target project, initialization command, or managed markers are required to install or activate the plugin. Once loaded, its single Stop hook reviews any existing AGENTS.md in the active project's working directory. Do not ask the user to opt in each repository. Do not scan other projects, create AGENTS.md files during installation, or assume the plugin checkout is a memory target.
 
-Run `node "<plugin-root>/bin/project-memory.mjs" init --project "<target-project>"`. This does not read stdin and works from any working directory. Verify using the same command with `status` instead of `init`. The installer performs both steps; the user does not need a special chat message to activate memory. If shell access is unavailable, report the setup limitation instead of claiming automatic maintenance is enabled.
+Verify the installed/enabled plugin and its single Stop hook, then confirm installation once. A new host session may be required. If shell access is unavailable, report the limitation instead of claiming installation succeeded. If Claude loads CLAUDE.md instead of AGENTS.md at startup, report that loading distinction rather than silently editing other instructions.
 
-The initializer creates only AGENTS.md and preserves existing instructions. It is idempotent and does not import or change other files. Read the resulting file, then populate its managed state from verified project context and the user's request. Consolidate by topic without discarding facts whose relevance is merely uncertain.
+## Maintain existing AGENTS.md
 
-If partial or conflicting managed markers prevent initialization, explain the conflict; do not replace the file wholesale. If Claude loads an existing CLAUDE.md instead, report that compatibility issue rather than silently editing or removing it.
+Read AGENTS.md in the active project's working directory. If it does not exist, do nothing unless the user explicitly requested creation. Do not walk parent directories or create a missing file just because the plugin is installed.
 
-Confirm installation and the target project once, then let routine maintenance run without user reminders. A fresh host session may be required to load the installed hook. A successful initialization check proves the file has the managed sections, not that hooks have loaded or the state is semantically complete.
+Review at the end of every turn, including non-code work. Write only when durable knowledge changes; leave the file byte-for-byte unchanged for a no-op review. Do not announce routine reviews, ask for reminders or per-project activation, or add a second response solely about memory. Surface only failures or conflicts that require user action.
 
-## Maintain
+For an existing file without managed sections, no setup request is needed. On its first relevant update, read `<plugin-root>/templates/AGENTS.md` and incorporate its maintenance policy and managed state, preserving existing instructions and valid knowledge. Do not add empty sections merely to mark a review. Partial, duplicate, or out-of-order managed markers are a conflict: preserve the file and report the issue instead of appending another block or replacing it wholesale.
 
-Follow the maintenance policy embedded in AGENTS.md. Review at the end of every turn, including non-code work. Write only when durable knowledge changes; leave the file byte-for-byte unchanged for a no-op review. Do not announce routine reviews, ask the user to request updates, or add a second response solely about memory. Surface only failures or conflicts that require user action.
+Once managed sections exist, follow their embedded policy. Reread the latest file before a targeted edit within the state markers. If the file disappeared, do not recreate it automatically. Consolidate the current state instead of appending a turn history. Preserve still-valid decisions regardless of age, including rationale and known validity conditions. Remove information only on evidence of supersession or lost applicability. Distinguish accepted decisions from proposals and actual implementation from intentions.
 
-Reread the latest file before a targeted edit within the state markers. Consolidate the current state instead of appending a turn history. Preserve still-valid decisions regardless of age, including their rationale and known validity conditions. Remove or replace information only on evidence of supersession or lost applicability. Distinguish accepted decisions from proposals and actual implementation from intentions. Do not turn a code discrepancy into an invented change of requirements.
+The main agent owns memory edits when delegating. Preserve concurrent user edits, stable instructions, and markers. Do not add a second memory file, transcript archive, database, or global project store. A hook requests review; it does not determine truth or generate the summary. Never claim semantic freshness just because a hook ran.
 
-The main agent owns memory edits when delegating. Preserve concurrent user edits, stable instructions, and markers. Do not add a second memory file, transcript archive, database, or global project store. A hook requests review; it does not itself determine truth or generate the summary. Never claim semantic freshness just because a hook ran.
+## Optional file creation
+
+Only when the user explicitly asks to create AGENTS.md or initialize a project without one, resolve the intended target and run `node "<plugin-root>/bin/project-memory.mjs" init --project "<target-project>"`. Ask if that target is unclear. This command preserves existing instructions and does not read stdin. Populate the resulting managed state from verified context. The `status --project "<target-project>"` command reports whether AGENTS.md exists (`active`) and has complete managed markers (`initialized`); neither field proves that the host loaded its hook or the memory is complete.

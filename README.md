@@ -1,56 +1,39 @@
 # Project Memory
 
 Project Memory keeps a consolidated, repo-local handoff in AGENTS.md for code,
-documents, research, and other project work. It requires Node.js 20 or later and
-has no runtime dependencies or separate model API.
+documents, research, and other project work. Install it once in the agent host:
+it reviews any active project that already has AGENTS.md, without per-project
+activation. It requires Node.js 20 or later and has no runtime dependencies or
+separate model API.
 
 ## Install from this repository
 
 Give an installing agent this repository and a request such as:
 
-> Install Project Memory from this directory for `<project-path>` in `<host>`.
+> Install Project Memory from this directory in `<host>`.
 
-The agent should complete this setup once. The user does not need a special
-chat command to activate or update memory.
+The agent should complete this setup once for the selected host. In Codex,
+installation is user-level and applies across that user's projects, not across
+other operating-system accounts or unconfigured AI tools.
 
-1. Resolve the downloaded repository, the intended project root, and the host.
-   Ask if the target is unclear. Do not assume the installer repository, the
-   home directory, or every project is the target.
+1. Resolve the downloaded repository and the host. A target project is not
+   required for installation.
 2. Check that Node.js 20 or later is available. No `npm install` is needed.
 3. Install using the host's local-repository commands below. If already
    installed, verify the marketplace source and update that installation
    instead of adding duplicate hooks.
-4. Run the initialization and verification commands below with the explicit
-   target project.
-5. Read the resulting AGENTS.md and populate its state from verified project
-   context and accepted decisions. Preserve existing instructions. Report
-   conflicting or incomplete managed markers instead of replacing the file.
-6. Verify that the host loads the plugin and trusts/enables its Stop hook
+4. Verify that the host loads the plugin and trusts/enables its single Stop hook
    through its normal controls. Do not bypass approvals or copy the hook into
    user/project settings. Reload or start a new session if required.
-7. Confirm installation and the target once. Subsequent maintenance needs no
-   user reminders or routine "memory updated" messages.
+5. Confirm installation once. Do not ask the user to select or initialize each
+   project. Subsequent maintenance needs no reminders or routine "memory
+   updated" messages.
 
-Initialize the selected target:
-
-```text
-node "<repo-path>/bin/project-memory.mjs" init --project "<project-path>"
-```
-
-Verify initialization:
-
-```text
-node "<repo-path>/bin/project-memory.mjs" status --project "<project-path>"
-```
-
-Both commands work from any directory and do not read standard input. The
-status command returns `{"initialized":true}` when the managed sections exist;
-it does not prove that the host loaded the hook or that the memory is complete.
-
-Installing the plugin and enabling it for a project are separate steps. The
-installing agent should complete both. Each new target project needs this
-one-time initialization; installing the plugin does not opt in every project.
-Keep the source repository available when the host uses a local path.
+Once the hook is loaded, an existing AGENTS.md in the active project's working
+directory is sufficient. The file may be empty, ordinary instructions, or an
+existing managed memory. The plugin does not scan other directories or create
+missing AGENTS.md files during installation or automatic reviews. Keep the
+source repository available when the host uses a local path.
 
 ### Codex
 
@@ -63,7 +46,8 @@ codex plugin add project-memory@project-memory
 ```
 
 Use `codex plugin list` to verify installation. Open a new task after installation
-or update. The host must support and enable plugin Stop command hooks. When
+or update. The user-level plugin then applies to projects with AGENTS.md without
+an initialization command. The host must support and enable plugin Stop command hooks. When
 developing a locally cached plugin, follow the host's version/update workflow
 so the new definition is loaded rather than an old cached copy.
 
@@ -106,8 +90,16 @@ and is not supported.
 
 ## Memory model
 
-AGENTS.md contains a stable maintenance policy and a managed state section.
-Other project instructions stay outside those sections and are preserved.
+AGENTS.md is detected by its presence, not by special markers. On the first
+relevant update to an unmanaged file, the agent incorporates the template's
+maintenance policy and managed state, preserving existing instructions and
+still-valid knowledge. This is automatic and does not require an activation
+request. A no-change review leaves the file untouched, including when it has
+no managed sections yet.
+
+After adoption, other project instructions stay outside the managed sections
+and are preserved. Partial, duplicate, or out-of-order managed markers are a
+conflict to report, not permission to overwrite the file or append another block.
 
 The agent reviews memory at the end of every turn, but writes only when durable
 knowledge changes. A later session should be able to continue without the old
@@ -116,6 +108,7 @@ global memory store.
 
 | Situation | Expected action |
 | --- | --- |
+| No AGENTS.md exists in the active project directory | Do nothing; do not create it automatically |
 | A question repeats existing information | Leave AGENTS.md unchanged |
 | A feature, document, requirement, or accepted decision changes | Update its current topic |
 | An old decision still applies | Keep the decision and its rationale |
@@ -128,15 +121,36 @@ offline; revisit if shared concurrent editing becomes a requirement." Age or
 absence from the latest conversation is not a reason to discard a decision.
 The agent must not invent a reason or a condition that the project never had.
 
-The initializer creates AGENTS.md or appends managed sections while preserving
-existing instructions. Repeating initialization leaves an initialized file
-unchanged. The plugin activates only when all four managed markers are present
-and correctly ordered, not merely because some AGENTS.md exists.
-
 AGENTS.md is the only project memory file the plugin creates or maintains.
-Initialization does not import other documents, change other projects, or walk
-up parent directories. Hooks use the host's project working directory; start
-sessions in the initialized root.
+The hook uses the host's project working directory and does not walk up parent
+directories. Start sessions in the project root containing AGENTS.md. It reviews
+the project being worked on, not every repository on disk at once.
+
+## Optional creation and diagnostics
+
+No initialization command is needed for an existing AGENTS.md. If the user
+explicitly wants to create one in a project that lacks it, the installer can run:
+
+```text
+node "<repo-path>/bin/project-memory.mjs" init --project "<project-path>"
+```
+
+This optional initializer preserves existing instructions, refuses conflicting
+markers, and leaves an already initialized file unchanged. It does not import
+other documents or change other projects. Populate the managed state from
+verified project context after explicitly creating it.
+
+To inspect one project without changing it:
+
+```text
+node "<repo-path>/bin/project-memory.mjs" status --project "<project-path>"
+```
+
+Both commands work from any directory and do not read standard input. Status
+returns `active: true` for an existing readable AGENTS.md, including one with no
+managed sections. `initialized: true` additionally means all four managed
+markers are present and correctly ordered. These fields describe the file,
+not whether the host loaded its hook or the memory is semantically complete.
 
 Initialization uses a temporary lock and atomic replacement. If interrupted
 initialization leaves a lock, confirm no initialization is running before

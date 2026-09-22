@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { initializeProject, isInitialized } from '../lib/project-memory.mjs'
+import { initializeProject, isInitialized, projectStatus } from '../lib/project-memory.mjs'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = join(projectRoot, 'bin', 'project-memory.mjs')
@@ -88,12 +88,14 @@ test('initialization creates or preserves AGENTS.md and repeated initialization 
       await writeFile(join(root, 'NOTES.md'), notes)
     }
 
+    assert.deepEqual(await projectStatus(root), { active: Boolean(original), initialized: false })
     assert.deepEqual(await initializeProject(root), { existing: { agents: Boolean(original) }, updated: true })
     const content = await readFile(path)
     const agents = content.toString()
     assert.equal(agents.startsWith(original), true)
     assert.equal(agents.includes(notes), false)
     assertMarkers(agents)
+    assert.deepEqual(await projectStatus(root), { active: true, initialized: true })
     if (original) assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes)
 
     const knownTime = new Date('2000-01-02T03:04:05.000Z')
@@ -106,7 +108,7 @@ test('initialization creates or preserves AGENTS.md and repeated initialization 
   }
 })
 
-test('only unique ordered complete markers activate memory; invalid markers are rejected without changing files', async (t) => {
+test('only unique ordered complete markers identify managed memory; invalid markers are rejected without changing files', async (t) => {
   const root = await temporaryDirectory(t)
   const path = join(root, 'AGENTS.md')
   const notes = 'Keep this unrelated file unchanged.\n'
@@ -148,7 +150,7 @@ test('concurrent initialization writes one complete AGENTS.md document', async (
   assert.deepEqual(await readdir(root), ['AGENTS.md'])
 })
 
-test('source and installed CLI require explicit targets, preserve files, and finish with stdin open from another cwd', async (t) => {
+test('optional init and status CLI require explicit targets, preserve files, and finish with stdin open from another cwd', async (t) => {
   const launcherRoot = await temporaryDirectory(t, 'agent-memory-launcher-')
   const cachedBinary = await installedBinary(t)
   const cases = [
@@ -163,9 +165,9 @@ test('source and installed CLI require explicit targets, preserve files, and fin
       await writeFile(join(targetRoot, 'NOTES.md'), notes)
     }
     const options = { binary, cwd: launcherRoot, keepStdinOpen: true }
-    assert.deepEqual(jsonOutput(await runCli(['status', `--project=${targetRoot}`], options)), { initialized: false })
+    assert.deepEqual(jsonOutput(await runCli(['status', `--project=${targetRoot}`], options)), { active: Boolean(original), initialized: false })
     assert.deepEqual(jsonOutput(await runCli(['init', '--project', targetRoot], options)), { existing: { agents: Boolean(original) }, updated: true })
-    assert.deepEqual(jsonOutput(await runCli(['status', '--project', targetRoot], options)), { initialized: true })
+    assert.deepEqual(jsonOutput(await runCli(['status', '--project', targetRoot], options)), { active: true, initialized: true })
 
     const agents = await readFile(join(targetRoot, 'AGENTS.md'), 'utf8')
     assertMarkers(agents)
@@ -184,9 +186,7 @@ test('source and installed CLI require explicit targets, preserve files, and fin
   assert.deepEqual(await readdir(launcherRoot), [])
 })
 
-test('Stop detects hosts and honors overrides with the exact Claude, Codex, and Kimi payloads', async (t) => {
-  const root = await temporaryDirectory(t)
-  await initializeProject(root)
+test('Stop detects hosts for every active AGENTS.md and never writes it', async (t) => {
   const cases = [
     ['auto Codex', 'codex', [], { turn_id: 'turn-1' }],
     ['auto Claude', 'claude', [], {}],
@@ -196,17 +196,35 @@ test('Stop detects hosts and honors overrides with the exact Claude, Codex, and 
     ['explicit Claude', 'claude', ['--host', 'claude'], { turn_id: 'turn-1' }],
     ['explicit Kimi', 'kimi', ['--host', 'kimi'], {}]
   ]
-  const before = await readFile(join(root, 'AGENTS.md'))
-  for (const [label, host, args, event] of cases) {
-    assertStop(await runCli(['stop', ...args], { event: { cwd: root, ...event } }), host, label)
+  const projects = [
+    { label: 'empty', instructions: '', initialized: false },
+    { label: 'ordinary', instructions: 'Ordinary project instructions.\n', initialized: false },
+    { label: 'partial', instructions: `${policyStart}\npartial instructions\n`, initialized: false },
+    { label: 'managed', instructions: null, initialized: true }
+  ]
+  for (const project of projects) {
+    const root = await temporaryDirectory(t)
+    const path = join(root, 'AGENTS.md')
+    if (project.initialized) await initializeProject(root)
+    else await writeFile(path, project.instructions)
+    assert.deepEqual(await projectStatus(root), { active: true, initialized: project.initialized }, project.label)
+    const knownTime = new Date('2000-01-02T03:04:05.000Z')
+    await utimes(path, knownTime, knownTime)
+    const before = await readFile(path)
+    const beforeStat = await stat(path, { bigint: true })
+    for (const [label, host, args, event] of cases) {
+      assertStop(await runCli(['stop', ...args], { event: { cwd: root, ...event } }), host, `${project.label}: ${label}`)
+    }
+    assert.deepEqual(await readFile(path), before, project.label)
+    assert.equal((await stat(path, { bigint: true })).mtimeNs, beforeStat.mtimeNs, project.label)
   }
-  assert.deepEqual(await readFile(join(root, 'AGENTS.md')), before)
 })
 
-test('Stop silently ignores invalid events, unknown hosts, and uninitialized projects without writing', async (t) => {
+test('Stop silently ignores invalid events, unknown hosts, and projects without AGENTS.md', async (t) => {
   const root = await temporaryDirectory(t)
-  const uninitialized = await temporaryDirectory(t)
+  const missing = await temporaryDirectory(t)
   await initializeProject(root)
+  assert.deepEqual(await projectStatus(missing), { active: false, initialized: false })
   const before = await readFile(join(root, 'AGENTS.md'))
   const cases = [
     { label: 'malformed JSON', input: '{' },
@@ -214,14 +232,14 @@ test('Stop silently ignores invalid events, unknown hosts, and uninitialized pro
     { label: 'missing cwd', event: {} },
     { label: 'empty cwd', event: { cwd: '' } },
     { label: 'unknown host', args: ['stop', '--host', 'unknown'], event: { cwd: root } },
-    { label: 'uninitialized project', event: { cwd: uninitialized, turn_id: 'turn-1' } }
+    { label: 'missing AGENTS.md', event: { cwd: missing, turn_id: 'turn-1' } }
   ]
   for (const { label, args = ['stop'], ...options } of cases) {
     assert.deepEqual(await runCli(args, options), silent, label)
   }
   assert.deepEqual(await readFile(join(root, 'AGENTS.md')), before)
   assert.deepEqual(await readdir(root), ['AGENTS.md'])
-  assert.deepEqual(await readdir(uninitialized), [])
+  assert.deepEqual(await readdir(missing), [])
 })
 
 test('Stop guards prevent nested reviews and fail open for invalid guard values', async (t) => {

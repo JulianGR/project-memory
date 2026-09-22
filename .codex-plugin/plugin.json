@@ -1,6 +1,6 @@
 {
   "name": "project-memory",
-  "version": "1.0.0+codex.20260922094734",
+  "version": "1.0.0+codex.20260922101805",
   "description": "Repo-local AGENTS.md memory with a relevance review every turn for Codex.",
   "author": {
     "name": "JulianGR",
@@ -18,13 +18,13 @@
   "interface": {
     "displayName": "Project Memory",
     "shortDescription": "Keep durable project context current.",
-    "longDescription": "Maintains consolidated project state and decision rationale in AGENTS.md, with a review each turn and writes only for relevant changes.",
+    "longDescription": "Automatically reviews existing AGENTS.md files across your projects at turn end, preserving instructions and writing only relevant project state and decisions.",
     "developerName": "JulianGR",
     "category": "Productivity",
     "capabilities": [
       "Project memory",
       "Turn-end review"
     ],
-    "defaultPrompt": "Initialize durable project memory in this project."
+    "defaultPrompt": "Maintain this project's existing AGENTS.md as durable project memory."
   }
 }

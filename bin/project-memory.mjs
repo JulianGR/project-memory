@@ -1,4 +1,4 @@
-import { initializeProject, isInitialized, projectPath, reviewInstruction } from '../lib/project-memory.mjs'
+import { initializeProject, projectPath, projectStatus, reviewInstruction } from '../lib/project-memory.mjs'
 
 function optionsFrom(args, allowed) {
   const options = {}
@@ -40,15 +40,16 @@ async function main() {
     if (!lifecycle) {
       if (!options.project) throw new Error('Specify the target project with --project <directory>.')
       const root = projectPath(options.project)
-      emit(command === 'init' ? await initializeProject(root) : { initialized: await isInitialized(root) })
+      emit(command === 'init' ? await initializeProject(root) : await projectStatus(root))
       return
     }
     const event = await eventFromInput()
     if (event.stop_hook_active !== undefined && event.stop_hook_active !== false) return
     const root = projectPath(event.cwd)
     const host = hostFrom(options, event)
-    if (!await isInitialized(root)) return
-    const reason = reviewInstruction(root)
+    const status = await projectStatus(root)
+    if (!status.active) return
+    const reason = reviewInstruction(root, status.initialized)
     if (host === 'claude') {
       emit({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: reason } })
     } else if (host === 'kimi') {
