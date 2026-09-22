@@ -15,5 +15,6 @@
     "handoff",
     "project-context"
   ],
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "hooks": "./.claude-plugin/hooks.json"
 }

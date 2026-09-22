@@ -1,10 +1,11 @@
 # Project Memory
 
 Project Memory keeps a consolidated, repo-local handoff in AGENTS.md for code,
-documents, research, and other project work. Install it once in the agent host:
-it reviews any active project that already has AGENTS.md, without per-project
-activation. It requires Node.js 20 or later and has no runtime dependencies or
-separate model API.
+documents, research, and other project work. In Codex, agents maintain existing
+AGENTS.md files through instructions during normal work, without hooks or forced
+continuations. Claude Code and Kimi retain their host-specific Stop hooks.
+The optional commands require Node.js 20 or later and have no runtime
+dependencies or separate model API.
 
 ## Install from this repository
 
@@ -22,14 +23,15 @@ other operating-system accounts or unconfigured AI tools.
 3. Install using the host's local-repository commands below. If already
    installed, verify the marketplace source and update that installation
    instead of adding duplicate hooks.
-4. Verify that the host loads the plugin and trusts/enables its single Stop hook
-   through its normal controls. Do not bypass approvals or copy the hook into
+4. Verify that the host loads the plugin. Codex must have no Project Memory
+   hooks registered. For Claude Code and Kimi, verify their single Stop hook
+   through normal host controls. Do not bypass approvals or copy hooks into
    user/project settings. Reload or start a new session if required.
 5. Confirm installation once. Do not ask the user to select or initialize each
    project. Subsequent maintenance needs no reminders or routine "memory
    updated" messages.
 
-Once the hook is loaded, an existing AGENTS.md in the active project's working
+Once the plugin is loaded, an existing AGENTS.md in the active project's working
 directory is sufficient. The file may be empty, ordinary instructions, or an
 existing managed memory. The plugin does not scan other directories or create
 missing AGENTS.md files during installation or automatic reviews. Keep the
@@ -46,10 +48,13 @@ codex plugin add project-memory@project-memory
 ```
 
 Use `codex plugin list` to verify installation. Open a new task after installation
-or update. The user-level plugin then applies to projects with AGENTS.md without
-an initialization command. The host must support and enable plugin Stop command hooks. When
-developing a locally cached plugin, follow the host's version/update workflow
-so the new definition is loaded rather than an old cached copy.
+or update. No initialization command is needed for an existing AGENTS.md.
+Codex registers no Project Memory hooks. Maintenance follows the instructions
+in AGENTS.md within the normal turn, before the final response when useful.
+It is not guaranteed on every turn, and pending memory work does not prevent
+the task from finishing. Do not add hooks or forced continuations to enforce it.
+When developing a locally cached plugin, follow the host's version/update
+workflow so the new definition is loaded rather than an old cached copy.
 
 ### Claude Code
 
@@ -101,8 +106,10 @@ After adoption, other project instructions stay outside the managed sections
 and are preserved. Partial, duplicate, or out-of-order managed markers are a
 conflict to report, not permission to overwrite the file or append another block.
 
-The agent reviews memory at the end of every turn, but writes only when durable
-knowledge changes. A later session should be able to continue without the old
+In Codex, the agent updates memory when normal work establishes durable
+knowledge useful to a later session. Review and writing are not mandatory on
+every turn. The other hosts can request review through their Stop hooks.
+A later session should be able to continue without the old
 conversation. There is no turn log, commit log, transcript archive, database, or
 global memory store.
 
@@ -122,7 +129,7 @@ absence from the latest conversation is not a reason to discard a decision.
 The agent must not invent a reason or a condition that the project never had.
 
 AGENTS.md is the only project memory file the plugin creates or maintains.
-The hook uses the host's project working directory and does not walk up parent
+Maintenance uses the host's project working directory and does not walk up parent
 directories. Start sessions in the project root containing AGENTS.md. It reviews
 the project being worked on, not every repository on disk at once.
 
@@ -156,33 +163,35 @@ Initialization uses a temporary lock and atomic replacement. If interrupted
 initialization leaves a lock, confirm no initialization is running before
 removing that specific lock. Normal hooks only read AGENTS.md.
 
-## One hook, at turn end
+## Host behavior
 
-Each supported host registers exactly one hook: Stop. There are no startup
-or prompt-submission hooks. Codex and Claude discover the same
-`hooks/hooks.json`; Kimi declares its Stop hook in `kimi.plugin.json`.
+Codex registers no lifecycle hooks and relies on AGENTS.md instructions.
+Claude Code explicitly loads `.claude-plugin/hooks.json` from its manifest;
+Kimi declares its Stop hook in `kimi.plugin.json`. There is no shared
+`hooks/hooks.json` for Codex to discover.
 
 | Host | Stop continuation |
 | --- | --- |
-| Codex | `decision: "block"` with a review instruction in `reason` |
+| Codex | None; maintenance follows instructions within the normal turn |
 | Claude Code | Stop `additionalContext`, without reporting a hook error |
 | Kimi Code CLI | `permissionDecision: "deny"` with a review instruction |
 
-The runtime distinguishes Codex's event by its `turn_id`; Kimi passes an
-explicit host option. The `stop_hook_active` guard skips nested reviews in
-Codex and Claude. Kimi also bounds continuation in its host implementation.
+The command runtime retains Codex event support for compatibility, but no
+Codex hook invokes it. Kimi passes an explicit host option. The
+`stop_hook_active` guard skips nested reviews in compatible hosts. Kimi also
+bounds continuation in its host implementation.
 If the review was already completed and nothing new changed, the agent can
 finish without repeating it. See the
 [Codex Stop contract](https://learn.chatgpt.com/docs/hooks#stop),
 [Claude Stop contract](https://code.claude.com/docs/en/hooks#stop-decision-control),
 and [Kimi hook contract](https://github.com/MoonshotAI/kimi-cli/blob/main/docs/en/customization/hooks.md).
 
-The hook asks the active agent to maintain memory quietly, without asking the
+Where registered, the hook asks the active agent to maintain memory quietly, without asking the
 user for reminders or adding a second response just to announce maintenance.
 Real failures, conflicts, and required permissions may still need user input.
 The host can display hook activity or feedback; the plugin cannot hide host UI.
 
-One registered hook is not a guarantee of one invocation or zero extra model
+For hosts using hooks, one registered hook is not a guarantee of one invocation or zero extra model
 work. Stop may add a continuation and token cost even for question-only turns.
 The hook does not itself classify relevance, verify the whole project, or write
 a summary. Interrupted turns, disabled hooks, host errors, and read-only
@@ -210,7 +219,7 @@ on commits or diffs to decide whether memory is relevant.
 | `.codex-plugin/plugin.json` | Codex plugin manifest |
 | `.claude-plugin/` | Claude plugin manifest and marketplace entry |
 | `kimi.plugin.json` | Kimi plugin manifest and single Stop hook |
-| `hooks/hooks.json` | One default-discovered Stop hook for Codex and Claude |
+| `.claude-plugin/hooks.json` | Stop hook explicitly registered only by Claude Code |
 | `bin/` and `lib/` | Node entry point and shared runtime |
 | `templates/AGENTS.md` | Initial maintenance policy and project state sections |
 | `skills/project-memory/` | Agent instructions for installation and maintenance |
@@ -227,7 +236,7 @@ node --test tests/*.test.mjs
 
 Tests use temporary projects to check explicit target selection, initialization
 without stdin, instruction preservation, byte-level idempotence, installed-copy
-execution, host output formats, loop guards, and the single-hook manifests.
+execution, host output formats, loop guards, and host-specific hook registration.
 They do not prove that every model will always classify relevance correctly.
 
 ## License

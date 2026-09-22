@@ -16,13 +16,13 @@ function commandFor(hooks, event) {
   return hooks[event][0].hooks[0].command
 }
 
-test('Claude and Codex manifests use shared Stop discovery with valid runtime and marketplace files', async () => {
+test('Codex has no hooks while Claude declares its Stop hook with valid runtime and marketplace files', async () => {
   const [binary, library, claude, codex, hooks, claudeMarketplace, codexMarketplace] = await Promise.all([
     readFile(join(projectRoot, 'bin', 'project-memory.mjs'), 'utf8'),
     readFile(join(projectRoot, 'lib', 'project-memory.mjs'), 'utf8'),
     readJson('.claude-plugin/plugin.json'),
     readJson('.codex-plugin/plugin.json'),
-    readJson('hooks/hooks.json'),
+    readJson('.claude-plugin/hooks.json'),
     readJson('.claude-plugin/marketplace.json'),
     readJson('.agents/plugins/marketplace.json')
   ])
@@ -30,9 +30,10 @@ test('Claude and Codex manifests use shared Stop discovery with valid runtime an
   assert.notEqual(binary.trim(), '')
   assert.notEqual(library.trim(), '')
   assert.equal(claude.name, 'project-memory')
-  assert.equal(claude.hooks, undefined)
+  assert.equal(claude.hooks, './.claude-plugin/hooks.json')
   assert.equal(codex.name, 'project-memory')
   assert.equal(codex.hooks, undefined)
+  await assert.rejects(readFile(join(projectRoot, 'hooks', 'hooks.json')), { code: 'ENOENT' })
   assert.deepEqual(Object.keys(hooks.hooks), ['Stop'])
   assert.equal(commandFor(hooks.hooks, 'Stop'), 'node "${CLAUDE_PLUGIN_ROOT}/bin/project-memory.mjs" stop')
   assert.equal(claudeMarketplace.plugins[0].source, './')
