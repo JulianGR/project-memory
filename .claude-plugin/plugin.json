@@ -1,7 +1,7 @@
 {
   "name": "project-memory",
   "displayName": "Project Memory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Repo-local AGENTS.md memory with a relevance review every turn for Claude Code.",
   "author": {
     "name": "JulianGR",

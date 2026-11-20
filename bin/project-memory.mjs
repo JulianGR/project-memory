@@ -1,4 +1,4 @@
-import { initializeProject, projectPath, projectStatus, reviewInstruction } from '../lib/project-memory.mjs'
+import { initializeProject, projectPath, projectStatus, reviewInstruction, upgradeProject } from '../lib/project-memory.mjs'
 
 function optionsFrom(args, allowed) {
   const options = {}
@@ -34,13 +34,15 @@ function emit(value) {
 async function main() {
   const [command, ...args] = process.argv.slice(2)
   const lifecycle = command === 'stop'
-  if (!lifecycle && !['init', 'status'].includes(command)) throw new Error(`Unknown command: ${command || ''}`)
+  if (!lifecycle && !['init', 'upgrade', 'status'].includes(command)) throw new Error(`Unknown command: ${command || ''}`)
   try {
     const options = optionsFrom(args, lifecycle ? ['host'] : ['project'])
     if (!lifecycle) {
       if (!options.project) throw new Error('Specify the target project with --project <directory>.')
       const root = projectPath(options.project)
-      emit(command === 'init' ? await initializeProject(root) : await projectStatus(root))
+      if (command === 'init') emit(await initializeProject(root))
+      else if (command === 'upgrade') emit(await upgradeProject(root))
+      else emit(await projectStatus(root))
       return
     }
     const event = await eventFromInput()

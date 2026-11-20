@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { initializeProject, isInitialized, projectStatus } from '../lib/project-memory.mjs'
+import { initializeProject, isInitialized, projectStatus, upgradeProject } from '../lib/project-memory.mjs'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = join(projectRoot, 'bin', 'project-memory.mjs')
@@ -256,4 +256,43 @@ test('Stop guards prevent nested reviews and fail open for invalid guard values'
       assertStop(await runCli(args, { event }), host, `${host}: ${active}`)
     }
   }
+})
+
+test('upgrade updates only outdated policy markers while preserving custom instructions, state, and idempotence', async (t) => {
+  const missing = await temporaryDirectory(t)
+  assert.deepEqual(await upgradeProject(missing), { existing: { agents: false, initialized: false }, updated: false })
+  assert.deepEqual(await readdir(missing), [])
+
+  const uninitialized = await temporaryDirectory(t)
+  const plainText = 'Custom repo instructions without markers.\n'
+  await writeFile(join(uninitialized, 'AGENTS.md'), plainText)
+  assert.deepEqual(await upgradeProject(uninitialized), { existing: { agents: true, initialized: false }, updated: false })
+  assert.equal(await readFile(join(uninitialized, 'AGENTS.md'), 'utf8'), plainText)
+
+  const root = await temporaryDirectory(t)
+  const path = join(root, 'AGENTS.md')
+  const customPrefix = '# Repo header\nKeep this prefix intact.\n\n'
+  const customState = `${stateStart}\n## Project memory\n\n### Custom preserved state\n- Tried X: failed because Y.\n${stateEnd}\n`
+  const legacyDoc = `${customPrefix}${policyStart}\n## Old policy\nDo not create a second memory file.\n${policyEnd}\n\n${customState}`
+  await writeFile(path, legacyDoc)
+
+  const upgraded = jsonOutput(await runCli(['upgrade', '--project', root], { keepStdinOpen: true }))
+  assert.deepEqual(upgraded, { existing: { agents: true, initialized: true }, updated: true })
+
+  const after = await readFile(path, 'utf8')
+  assertMarkers(after)
+  assert.equal(after.startsWith(customPrefix), true)
+  assert.equal(after.endsWith(`\n\n${customState}`), true)
+  assert.match(after, /\.memory\//)
+  assert.doesNotMatch(after, /Do not create a second memory file/)
+
+  const knownTime = new Date('2000-01-02T03:04:05.000Z')
+  await utimes(path, knownTime, knownTime)
+  const beforeStat = await stat(path, { bigint: true })
+  assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true }, updated: false })
+  assert.equal(await readFile(path, 'utf8'), after)
+  assert.equal((await stat(path, { bigint: true })).mtimeNs, beforeStat.mtimeNs)
+
+  await writeFile(path, `${policyStart}\nbroken\n`)
+  await assert.rejects(upgradeProject(root), /markers/)
 })

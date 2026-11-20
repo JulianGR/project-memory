@@ -1,30 +1,44 @@
 ---
 name: project-memory
-description: Install Project Memory for an agent host or maintain existing project AGENTS.md files as consolidated, repo-local memory. Use when asked to install Project Memory, preserve decisions, or refresh durable context for Claude, Codex, or Kimi. Covers code and non-code work.
+description: Maintain simple Markdown session handoffs in AGENTS.md (with tried/failed history, on-demand consolidation into .memory/, and cross-project preferences in ~/.project-memory/USER.md) or install Project Memory for Claude, Codex, or Kimi.
 ---
 
 # Project memory
 
 ## Install once for the host
 
-Install only when the user requests it, not for questions about the plugin. Resolve the host from the request or current session. Follow the local-repository instructions in `<plugin-root>/README.md`, resolving the plugin root from this skill's location. In Codex, install for the current user and rely on AGENTS.md instructions for memory maintenance. Do not register hooks or force continuations in Codex. Other hosts require their own installation. Do not bypass host trust or permission checks or register duplicate hooks in user or project settings.
+Install only when the user requests plugin installation, not for ordinary memory questions. Resolve `<plugin-root>` from this skill's directory and follow `<plugin-root>/README.md` for the active host:
+- **Codex**: install at user level; register **no** hooks or forced continuations.
+- **Claude Code / Kimi**: verify their single `Stop` hook without adding duplicate hooks or bypassing host approvals.
 
-No target project, initialization command, or managed markers are required to install or activate the plugin. Codex maintains existing AGENTS.md files through instructions within the normal turn. Claude Code and Kimi retain their host-specific Stop hooks. Do not ask the user to opt in each repository. Do not scan other projects, create AGENTS.md files during installation, or assume the plugin checkout is a memory target.
+Do not scan unrelated projects or create `AGENTS.md` files during installation.
 
-Verify the installed/enabled plugin and that Codex registers no Project Memory hooks. For Claude Code and Kimi, verify their single Stop hook instead. Confirm installation once. A new host session may be required. If shell access is unavailable, report the limitation instead of claiming installation succeeded. If Claude loads CLAUDE.md instead of AGENTS.md at startup, report that loading distinction rather than silently editing other instructions.
+## Day-to-day handoff in `AGENTS.md`
 
-## Maintain existing AGENTS.md
+Read `AGENTS.md` in the active project's working directory (and `~/.project-memory/USER.md` once per session if it exists). If `AGENTS.md` does not exist, do nothing unless the user asks to create or initialize memory (for example, *"crea un AGENTS.md para retomar"*).
 
-Read AGENTS.md in the active project's working directory. If it does not exist, do nothing unless the user explicitly requested creation. Do not walk parent directories or create a missing file just because the plugin is installed.
+When `AGENTS.md` exists, keep it ready so another AI can pick up immediately when the session closes:
+- Update on meaningful turns before the final reply: what was done, exact current state & next step, **what was tried (both what worked and what failed + why)**, and accepted decisions/validation commands.
+- Leave `AGENTS.md` byte-for-byte unchanged on trivial Q&A or turns with no durable outcome. Do not announce routine updates or ask for reminders.
+- If an existing `AGENTS.md` has no managed markers yet, incorporate `<plugin-root>/templates/AGENTS.md` on its first meaningful update while preserving existing instructions. Report partial, duplicate, or out-of-order markers instead of overwriting.
+- Reread `AGENTS.md` right before editing inside `state` markers. The main agent owns memory edits when delegating.
 
-During normal work, including non-code tasks, update memory before the final response when durable knowledge changes. In Codex, review and writing are not required on every turn, and pending memory work does not prevent the task from finishing. Leave the file byte-for-byte unchanged when there is nothing useful to add. Do not announce routine reviews, ask for reminders or per-project activation, or add a second response solely about memory. Surface only failures or conflicts that require user action.
+## Consolidate without losing past weeks (`.memory/`)
 
-For an existing file without managed sections, no setup request is needed. On its first relevant update, read `<plugin-root>/templates/AGENTS.md` and incorporate its maintenance policy and managed state, preserving existing instructions and valid knowledge. Do not add empty sections merely to mark a review. Partial, duplicate, or out-of-order managed markers are a conflict: preserve the file and report the issue instead of appending another block or replacing it wholesale.
+Keep `AGENTS.md` lean (~150–250 lines) so startup stays fast and clear. When the user asks to consolidate (for example, *"consolida AGENTS.md"*) or `AGENTS.md` grows past ~250 lines:
+1. If the file still carries an older `policy` block, refresh only the `policy` block first via `node "<plugin-root>/bin/project-memory.mjs" upgrade --project "<target-project>"`.
+2. Rewrite the `state` block into a crisp active handoff: current focus & next step, active dead ends/traps, standing decisions, and validation commands.
+3. **Never throw away older weeks' context**: move resolved investigations, older milestones (`YYYY-MM`), and deep subsystem notes into plain Markdown files inside `<target-project>/.memory/` (e.g., `.memory/history.md` or `.memory/<topic>.md`), and leave a one-line summary link per file under `### Archive index` in `AGENTS.md`.
 
-Once managed sections exist, follow their embedded policy. Reread the latest file before a targeted edit within the state markers. If the file disappeared, do not recreate it automatically. Consolidate the current state instead of appending a turn history. Preserve still-valid decisions regardless of age, including rationale and known validity conditions. Remove information only on evidence of supersession or lost applicability. Distinguish accepted decisions from proposals and actual implementation from intentions.
+## Cross-project memory (`~/.project-memory/USER.md`)
 
-The main agent owns memory edits when delegating. Preserve concurrent user edits, stable instructions, and markers. Do not add a second memory file, transcript archive, database, or global project store. A hook requests review; it does not determine truth or generate the summary. Never claim semantic freshness just because a hook ran.
+Use `~/.project-memory/USER.md` only for durable user preferences, workflow habits, and lessons that apply across all repositories. Create or update it only when the user expresses a cross-project rule or explicitly asks to remember something globally. Keep it concise (<100 lines) and free of repo-specific details.
 
-## Optional file creation
+## Optional CLI commands
 
-Only when the user explicitly asks to create AGENTS.md or initialize a project without one, resolve the intended target and run `node "<plugin-root>/bin/project-memory.mjs" init --project "<target-project>"`. Ask if that target is unclear. This command preserves existing instructions and does not read stdin. Populate the resulting managed state from verified context. The `status --project "<target-project>"` command reports whether AGENTS.md exists (`active`) and has complete managed markers (`initialized`); neither field proves that the host loaded its hook or the memory is complete.
+- Initialize a project explicitly requested by the user:
+  `node "<plugin-root>/bin/project-memory.mjs" init --project "<target-project>"`
+- Upgrade an existing initialized project's `policy` block without touching instructions or `state`:
+  `node "<plugin-root>/bin/project-memory.mjs" upgrade --project "<target-project>"`
+- Inspect `AGENTS.md` status (`active`, `initialized`):
+  `node "<plugin-root>/bin/project-memory.mjs" status --project "<target-project>"`

@@ -1,6 +1,6 @@
 {
   "name": "project-memory",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Repo-local AGENTS.md memory with one turn-end review hook for Kimi Code CLI.",
   "author": {
     "name": "JulianGR"
