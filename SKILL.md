@@ -1,45 +1,48 @@
 ---
 name: project-memory
-description: Automatically maintain AGENTS.md project memory with a protected Read-Only goal (drift detection and propose-only updates), verified worked/failed handoff state, auto-consolidation into .memory/, and cross-project rules in ~/.project-memory/USER.md.
+description: Automatically maintain project continuity using SPEC.md (Read-Only goal anchor with drift detection) and AGENTS.md (exclusive live handoff with verified worked/failed state, real distillation, subfolder AGENTS.md support, and voice dictation handling for legends.md).
 ---
 
 # Project memory
 
-Paths below (`scripts/project-memory.mjs`, `templates/AGENTS.md`) are relative to this skill's directory.
+Paths below (`scripts/project-memory.mjs`, `templates/AGENTS.md`, `templates/SPEC.md`) are relative to this skill's directory.
 
-## Automatic day-to-day behavior (zero manual invocation)
+## Core rules (zero manual invocation)
 
-Read `AGENTS.md` in the active project's working directory (and `~/.project-memory/USER.md` once per session if it exists). If `AGENTS.md` does not exist, do nothing unless the user asks to create or initialize project memory (for example, *"crea un AGENTS.md"* or *"inicializa memoria"*).
+1. **Two mutually referenced files - nothing else**:
+   - `SPEC.md`: immutable project goal anchor (`Read-Only` for AI; edit **only** after explicit user approval).
+   - `AGENTS.md`: exclusive live session handoff (and `<subfolder>/AGENTS.md` when a project spans independent modules/subfolders).
+   - **Never** use `README.md` as project memory, and **never** create `.memory/` directories or extra status/history files.
+2. **Voice dictation alias (`legends.md` = `AGENTS.md`)**:
+   - Voice dictation frequently transcribes `"AGENTS.md"` as `"legends.md"`, `"legend.md"`, or `"agent.md"`. Always interpret those as `AGENTS.md` and never create a `legends.md` file.
+3. **Opt-in initialization**:
+   - Read `SPEC.md` and `AGENTS.md` in the active project if they exist (plus `~/.project-memory/USER.md` once per session if present).
+   - If `AGENTS.md` does not exist, do nothing unless the user asks to create or initialize memory (e.g., *"crea un AGENTS.md"* or dictated *"crea un legends.md"*).
+   - When asked to initialize: run `node "<skill-dir>/scripts/project-memory.mjs" init --project "<target-project>"` (creates `SPEC.md` if missing and initializes `AGENTS.md` while preserving existing instructions). Clarify any critical ambiguity in the objective, fill `SPEC.md` once confirmed, and set initial `state` in `AGENTS.md`.
 
-When creating or initializing `AGENTS.md` in a project:
-1. Run `node "<skill-dir>/scripts/project-memory.mjs" init --project "<target-project>"` (preserves any existing instructions).
-2. If the project goal has critical ambiguity, ask brief clarifying questions first; otherwise populate `goal` (`Objective`, `Out of scope / limits`, `Done criteria`) once confirmed, and initialize `state`.
+## Day-to-day automatic maintenance
 
-When `AGENTS.md` already exists, maintain it automatically during normal work:
-- **Protected `goal` (`Read-Only` / `Propose-Only`)**:
-  - Never modify inside `goal` markers during routine turn updates or consolidation.
-  - Check active work against `goal` on meaningful turns: if your own work drifts into overengineering or extra scope, pull back to `goal`; if the user's direction changed or work uncovered a real nuance to the objective, leave `goal` untouched, flag it in 1-2 lines, and edit `goal` only after explicit user confirmation.
-- **Active `state` handoff**:
-  - Before the final reply on meaningful turns, update between `state` markers (reread from disk first; main agent owns edits when delegating): current state & next step, **what was tried (verified outcomes that worked + dead ends that failed and why)**, and accepted decisions/validation checks.
-  - Leave `AGENTS.md` byte-for-byte unchanged on trivial Q&A or no-change turns. Never announce routine updates.
-  - If an existing `AGENTS.md` has no managed markers yet, incorporate `<skill-dir>/templates/AGENTS.md` on its first meaningful update while preserving existing instructions, or run `upgrade` if it still uses legacy 4-marker `policy` + `state`. Report incomplete, duplicate, or out-of-order markers instead of overwriting.
+- **Immutable `SPEC.md` & automatic drift check**:
+  - Never touch `SPEC.md` during routine updates or consolidation.
+  - On meaningful turns, compare active work against `SPEC.md`: if your own approach drifts into overengineering or unrequested scope, cut it back to `SPEC.md`; if the user's goal genuinely evolved or work revealed a key nuance, leave `SPEC.md` untouched, flag the mismatch in 1-2 lines, and update `SPEC.md` only after explicit user confirmation.
+- **Live `AGENTS.md` handoff**:
+  - Before the final reply on meaningful turns, reread `AGENTS.md` and quietly update between `state` markers (main agent integrates subagent findings): exact current state & next step, **what was tried (verified wins backed by real checks + failed dead ends and why)**, and accepted decisions/validation commands.
+  - Leave `AGENTS.md` untouched on trivial Q&A or no-change turns. Never announce routine updates or store secrets.
 
-## Automatic consolidation without losing past weeks (`.memory/`)
+## Consolidation by real distillation (no `.memory/`)
 
-Keep `AGENTS.md` lean (~150-250 lines). Automatically when `AGENTS.md` exceeds ~250 lines - or whenever the user says `"consolida AGENTS.md"` - do this:
-1. If the file still carries an older `policy` block or lacks `goal` markers, run `node "<skill-dir>/scripts/project-memory.mjs" upgrade --project "<target-project>"` first (preserves prefix, `goal`, and `state`).
-2. Leave `goal` untouched. Rewrite `state` into a crisp active handoff: current focus & next step, active traps/dead ends, standing decisions, and validation checks.
-3. Move older milestones (`YYYY-MM`), resolved investigations, and deep reference notes into plain Markdown files inside `<target-project>/.memory/` (e.g., `.memory/history.md` or `.memory/<topic>.md`), keeping a one-line summary link per file under `### Archive index`.
+Keep `AGENTS.md` lean (~150-200 lines). When `AGENTS.md` grows past ~200 lines or the user asks to consolidate (e.g., `"consolida AGENTS.md"` or dictated `"consolida legends.md"`):
+1. If `AGENTS.md` still carries an older `policy` block or lacks `SPEC.md`, run `node "<skill-dir>/scripts/project-memory.mjs" upgrade --project "<target-project>"` first (updates `policy` and creates `SPEC.md` if missing, never overwriting existing `SPEC.md` or `state`).
+2. Leave `SPEC.md` untouched.
+3. **Distill** resolved investigations and old dead ends into crisp 1-line conclusions/traps inside `AGENTS.md` rather than dumping history into `.memory/`.
+4. When a project contains distinct submodules or areas in subfolders, place module-specific memory in `<subfolder>/AGENTS.md` (loaded natively by Codex and OpenCode when working in that subfolder) and keep root `AGENTS.md` focused on project-wide handoff.
 
 ## Cross-project memory (`~/.project-memory/USER.md`)
 
-Use `~/.project-memory/USER.md` only for durable user preferences, workflow habits, and lessons that apply across all projects. Create or update it only when the user states a cross-project rule or explicitly asks to remember something globally. Keep it concise (under 100 lines) and free of project-specific state.
+Use `~/.project-memory/USER.md` only for durable user preferences and workflow habits that apply across all projects (under 100 lines, zero project-specific state).
 
 ## CLI helpers
 
-- Initialize a project explicitly requested by the user:
-  `node "<skill-dir>/scripts/project-memory.mjs" init --project "<target-project>"`
-- Upgrade an existing initialized project's `policy` (and add `goal` markers to legacy files without touching `goal` or `state` content):
-  `node "<skill-dir>/scripts/project-memory.mjs" upgrade --project "<target-project>"`
-- Inspect `AGENTS.md` status (`active`, `initialized`):
-  `node "<skill-dir>/scripts/project-memory.mjs" status --project "<target-project>"`
+- `node "<skill-dir>/scripts/project-memory.mjs" init --project "<target-project>"`
+- `node "<skill-dir>/scripts/project-memory.mjs" upgrade --project "<target-project>"`
+- `node "<skill-dir>/scripts/project-memory.mjs" status --project "<target-project>"`

@@ -9,8 +9,8 @@ import { initializeProject, isInitialized, projectStatus, upgradeProject } from 
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cliPath = join(projectRoot, 'scripts', 'project-memory.mjs')
-const markers = ['policy:start', 'policy:end', 'goal:start', 'goal:end', 'state:start', 'state:end'].map((name) => `<!-- project-memory:${name} -->`)
-const [policyStart, policyEnd, goalStart, goalEnd, stateStart, stateEnd] = markers
+const markers = ['policy:start', 'policy:end', 'state:start', 'state:end'].map((name) => `<!-- project-memory:${name} -->`)
+const [policyStart, policyEnd, stateStart, stateEnd] = markers
 
 async function temporaryDirectory(t, prefix = 'project-memory-') {
   const root = await mkdtemp(join(tmpdir(), prefix))
@@ -64,56 +64,83 @@ async function copiedSkillBinary(t) {
   return join(installedRoot, 'scripts', 'project-memory.mjs')
 }
 
-test('initialization creates or preserves AGENTS.md with policy, goal, and state blocks and repeated initialization changes neither bytes nor mtime', async (t) => {
+test('initialization creates SPEC.md and AGENTS.md, preserves existing instructions and existing SPEC.md, and never creates .memory', async (t) => {
   for (const original of ['', 'Local instructions that must remain intact.\n']) {
     const root = await temporaryDirectory(t)
-    const path = join(root, 'AGENTS.md')
-    const notes = 'This unrelated file must not become project memory.\n'
+    const agentsPath = join(root, 'AGENTS.md')
+    const specPath = join(root, 'SPEC.md')
+    const customSpec = '# Custom existing spec\nNever overwrite me.\n'
+    const readme = '# Public README\nMust never become memory.\n'
     if (original) {
-      await writeFile(path, original)
-      await writeFile(join(root, 'NOTES.md'), notes)
+      await writeFile(agentsPath, original)
+      await writeFile(specPath, customSpec)
+      await writeFile(join(root, 'README.md'), readme)
     }
 
-    assert.deepEqual(await projectStatus(root), { active: Boolean(original), initialized: false })
-    assert.deepEqual(await initializeProject(root), { existing: { agents: Boolean(original) }, updated: true })
-    const content = await readFile(path)
-    const agents = content.toString()
-    assert.equal(agents.startsWith(original), true)
-    assert.equal(agents.includes(notes), false)
-    assertMarkers(agents)
-    assert.deepEqual(await projectStatus(root), { active: true, initialized: true })
-    if (original) assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes)
+    assert.deepEqual(await projectStatus(root), {
+      active: Boolean(original),
+      initialized: false,
+      spec: Boolean(original)
+    })
+    assert.deepEqual(await initializeProject(root), {
+      existing: { agents: Boolean(original), spec: Boolean(original) },
+      updated: true
+    })
+
+    const agentsContent = await readFile(agentsPath)
+    const specContent = await readFile(specPath)
+    const agentsText = agentsContent.toString()
+    assert.equal(agentsText.startsWith(original), true)
+    assert.match(agentsText, /SPEC\.md/)
+    assert.match(agentsText, /legends\.md/)
+    assert.match(agentsText, /\*\*never\*\* use `README\.md`/i)
+    assert.doesNotMatch(agentsText, /### Archive index/)
+    assertMarkers(agentsText)
+    assert.deepEqual(await projectStatus(root), { active: true, initialized: true, spec: true })
+
+    if (original) {
+      assert.equal(specContent.toString(), customSpec)
+      assert.equal(await readFile(join(root, 'README.md'), 'utf8'), readme)
+    } else {
+      assert.match(specContent.toString(), /AGENTS\.md/)
+    }
 
     const knownTime = new Date('2000-01-02T03:04:05.000Z')
-    await utimes(path, knownTime, knownTime)
-    const before = await stat(path, { bigint: true })
-    assert.deepEqual(await initializeProject(root), { existing: { agents: true }, updated: false })
-    assert.deepEqual(await readFile(path), content)
-    assert.equal((await stat(path, { bigint: true })).mtimeNs, before.mtimeNs)
-    assert.deepEqual((await readdir(root)).sort(), original ? ['AGENTS.md', 'NOTES.md'] : ['AGENTS.md'])
+    await utimes(agentsPath, knownTime, knownTime)
+    await utimes(specPath, knownTime, knownTime)
+    const beforeAgents = await stat(agentsPath, { bigint: true })
+    const beforeSpec = await stat(specPath, { bigint: true })
+
+    assert.deepEqual(await initializeProject(root), {
+      existing: { agents: true, spec: true },
+      updated: false
+    })
+    assert.deepEqual(await readFile(agentsPath), agentsContent)
+    assert.deepEqual(await readFile(specPath), specContent)
+    assert.equal((await stat(agentsPath, { bigint: true })).mtimeNs, beforeAgents.mtimeNs)
+    assert.equal((await stat(specPath, { bigint: true })).mtimeNs, beforeSpec.mtimeNs)
+    assert.deepEqual((await readdir(root)).sort(), original ? ['AGENTS.md', 'README.md', 'SPEC.md'] : ['AGENTS.md', 'SPEC.md'])
   }
 })
 
-test('only unique ordered complete markers identify managed memory; invalid markers are rejected without changing files', async (t) => {
+test('only unique ordered complete markers identify managed memory; invalid markers are rejected without creating SPEC.md or changing files', async (t) => {
   const root = await temporaryDirectory(t)
   const path = join(root, 'AGENTS.md')
-  const notes = 'Keep this unrelated file unchanged.\n'
+  const readme = 'Keep README untouched.\n'
   assert.equal(await isInitialized(root), false)
   await writeFile(path, 'arbitrary instructions')
-  await writeFile(join(root, 'NOTES.md'), notes)
+  await writeFile(join(root, 'README.md'), readme)
   assert.equal(await isInitialized(root), false)
   await initializeProject(root)
   const valid = await readFile(path, 'utf8')
+  await rm(join(root, 'SPEC.md'))
   assert.equal(await isInitialized(root), true)
 
   const cases = [
     ['duplicate marker', valid.replace(stateEnd, `${stateEnd}\n${stateEnd}`)],
-    ['duplicate goal marker', valid.replace(goalEnd, `${goalEnd}\n${goalEnd}`)],
-    ['wrong order state before policy end', `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`],
-    ['wrong order goal after state', `${policyStart}\n${policyEnd}\n${stateStart}\n${stateEnd}\n${goalStart}\n${goalEnd}\n`],
-    ['missing state end', `${policyStart}\n${policyEnd}\n${goalStart}\n${goalEnd}\n${stateStart}\n`],
-    ['missing goal end', `${policyStart}\n${policyEnd}\n${goalStart}\n${stateStart}\n${stateEnd}\n`],
-    ['unclosed marker tag', `${policyStart}\n${policyEnd}\n<!-- project-memory:goal:start\n${stateStart}\n${stateEnd}\n`],
+    ['wrong order', `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`],
+    ['missing state end', `${policyStart}\n${policyEnd}\n${stateStart}\n`],
+    ['unclosed marker tag', `${policyStart}\n${policyEnd}\n<!-- project-memory:state:start\n${stateEnd}\n`],
     ['policy only', `${policyStart}\npartial\n${policyEnd}\n`],
     ['state only', `${stateStart}\npartial\n${stateEnd}\n`],
     ['missing policy end', `${policyStart}\npartial\n${stateStart}\npartial\n${stateEnd}\n`]
@@ -123,21 +150,20 @@ test('only unique ordered complete markers identify managed memory; invalid mark
     assert.equal(await isInitialized(root), false, label)
     await assert.rejects(initializeProject(root), /markers/, label)
     assert.equal(await readFile(path, 'utf8'), content, label)
-    assert.equal(await readFile(join(root, 'NOTES.md'), 'utf8'), notes, label)
-    assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'NOTES.md'], label)
+    assert.equal(await readFile(join(root, 'README.md'), 'utf8'), readme, label)
+    assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'README.md'], label)
   }
 })
 
-test('concurrent initialization writes one complete AGENTS.md document', async (t) => {
+test('concurrent initialization writes one complete SPEC.md and AGENTS.md pair', async (t) => {
   const root = await temporaryDirectory(t)
   const results = await Promise.all(Array.from({ length: 8 }, () => initializeProject(root)))
 
   assert.equal(results.filter(({ updated }) => updated).length, 1)
-  assert.equal(results.filter(({ existing }) => existing.agents === false).length, 1)
-  for (const result of results) assert.deepEqual(Object.keys(result).sort(), ['existing', 'updated'])
+  assert.equal(results.filter(({ existing }) => existing.agents === false && existing.spec === false).length, 1)
   assert.equal(await isInitialized(root), true)
   assertMarkers(await readFile(join(root, 'AGENTS.md'), 'utf8'))
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
+  assert.deepEqual((await readdir(root)).sort(), ['AGENTS.md', 'SPEC.md'])
 })
 
 test('CLI init and status require explicit --project, preserve files, and finish with stdin open from another cwd', async (t) => {
@@ -155,16 +181,27 @@ test('CLI init and status require explicit --project, preserve files, and finish
       await writeFile(join(targetRoot, 'NOTES.md'), notes)
     }
     const options = { binary, cwd: launcherRoot, keepStdinOpen: true }
-    assert.deepEqual(jsonOutput(await runCli(['status', `--project=${targetRoot}`], options)), { active: Boolean(original), initialized: false })
-    assert.deepEqual(jsonOutput(await runCli(['init', '--project', targetRoot], options)), { existing: { agents: Boolean(original) }, updated: true })
-    assert.deepEqual(jsonOutput(await runCli(['status', '--project', targetRoot], options)), { active: true, initialized: true })
+    assert.deepEqual(jsonOutput(await runCli(['status', `--project=${targetRoot}`], options)), {
+      active: Boolean(original),
+      initialized: false,
+      spec: false
+    })
+    assert.deepEqual(jsonOutput(await runCli(['init', '--project', targetRoot], options)), {
+      existing: { agents: Boolean(original), spec: false },
+      updated: true
+    })
+    assert.deepEqual(jsonOutput(await runCli(['status', '--project', targetRoot], options)), {
+      active: true,
+      initialized: true,
+      spec: true
+    })
 
     const agents = await readFile(join(targetRoot, 'AGENTS.md'), 'utf8')
     assertMarkers(agents)
     assert.equal(agents.startsWith(original), true)
     assert.equal(agents.includes(notes), false)
     if (original) assert.equal(await readFile(join(targetRoot, 'NOTES.md'), 'utf8'), notes)
-    assert.deepEqual((await readdir(targetRoot)).sort(), original ? ['AGENTS.md', 'NOTES.md'] : ['AGENTS.md'])
+    assert.deepEqual((await readdir(targetRoot)).sort(), original ? ['AGENTS.md', 'NOTES.md', 'SPEC.md'] : ['AGENTS.md', 'SPEC.md'])
   }
 
   for (const command of ['init', 'status', 'upgrade']) {
@@ -176,53 +213,57 @@ test('CLI init and status require explicit --project, preserve files, and finish
   assert.deepEqual(await readdir(launcherRoot), [])
 })
 
-test('upgrade migrates legacy 4-marker docs to include goal block and preserves user goal, custom instructions, state, and idempotence', async (t) => {
+test('upgrade updates outdated policy, creates missing SPEC.md, never overwrites existing SPEC.md or state, and stays idempotent', async (t) => {
   const missing = await temporaryDirectory(t)
-  assert.deepEqual(await upgradeProject(missing), { existing: { agents: false, initialized: false }, updated: false })
+  assert.deepEqual(await upgradeProject(missing), { existing: { agents: false, initialized: false, spec: false }, updated: false })
   assert.deepEqual(await readdir(missing), [])
 
   const uninitialized = await temporaryDirectory(t)
   const plainText = 'Custom repo instructions without markers.\n'
   await writeFile(join(uninitialized, 'AGENTS.md'), plainText)
-  assert.deepEqual(await upgradeProject(uninitialized), { existing: { agents: true, initialized: false }, updated: false })
+  assert.deepEqual(await upgradeProject(uninitialized), { existing: { agents: true, initialized: false, spec: false }, updated: false })
   assert.equal(await readFile(join(uninitialized, 'AGENTS.md'), 'utf8'), plainText)
+  assert.deepEqual(await readdir(uninitialized), ['AGENTS.md'])
 
   const root = await temporaryDirectory(t)
-  const path = join(root, 'AGENTS.md')
+  const agentsPath = join(root, 'AGENTS.md')
+  const specPath = join(root, 'SPEC.md')
   const customPrefix = '# Repo header\nKeep this prefix intact.\n\n'
   const customState = `${stateStart}\n## Project memory\n\n### Custom preserved state\n- Tried X: failed because Y.\n${stateEnd}\n`
-  const legacyDoc = `${customPrefix}${policyStart}\n## Old policy\nDo not create a second memory file.\n${policyEnd}\n\n${customState}`
-  await writeFile(path, legacyDoc)
-  assert.equal(await isInitialized(root), true)
+  const legacyDoc = `${customPrefix}${policyStart}\n## Old policy\nMove history into .memory/.\n${policyEnd}\n\n${customState}`
+  await writeFile(agentsPath, legacyDoc)
 
   const upgraded = jsonOutput(await runCli(['upgrade', '--project', root], { keepStdinOpen: true }))
-  assert.deepEqual(upgraded, { existing: { agents: true, initialized: true }, updated: true })
+  assert.deepEqual(upgraded, { existing: { agents: true, initialized: true, spec: false }, updated: true })
 
-  const after = await readFile(path, 'utf8')
+  const after = await readFile(agentsPath, 'utf8')
   assertMarkers(after)
   assert.equal(after.startsWith(customPrefix), true)
   assert.equal(after.endsWith(`\n\n${customState}`), true)
-  assert.match(after, /\.memory\//)
-  assert.match(after, /Protected goal/)
-  assert.doesNotMatch(after, /Do not create a second memory file/)
+  assert.match(after, /SPEC\.md/)
+  assert.match(after, /legends\.md/)
+  assert.doesNotMatch(after, /Move history into \.memory\//)
+  assert.equal((await readFile(specPath, 'utf8')).includes('Project specification'), true)
 
+  const userSpec = '# Locked goal\n- Objective: Keep everything in SPEC.md + AGENTS.md only.\n'
+  await writeFile(specPath, userSpec)
   const knownTime = new Date('2000-01-02T03:04:05.000Z')
-  await utimes(path, knownTime, knownTime)
-  const beforeStat = await stat(path, { bigint: true })
-  assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true }, updated: false })
-  assert.equal(await readFile(path, 'utf8'), after)
-  assert.equal((await stat(path, { bigint: true })).mtimeNs, beforeStat.mtimeNs)
+  await utimes(agentsPath, knownTime, knownTime)
+  await utimes(specPath, knownTime, knownTime)
+  const beforeAgentsStat = await stat(agentsPath, { bigint: true })
+  const beforeSpecStat = await stat(specPath, { bigint: true })
 
-  const customGoal = `${goalStart}\n## Project goal\n- **Objective**: Ship zero-dependency CLI.\n- **Out of scope / limits**: No servers or SQLite.\n- **Done criteria**: All node:test suites pass.\n${goalEnd}`
-  const withUserGoal = `${customPrefix}${policyStart}\n## Outdated v1.1 policy\n${policyEnd}\n\n${customGoal}\n\n${customState}`
-  await writeFile(path, withUserGoal)
-  assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true }, updated: true })
-  const afterGoalPreserved = await readFile(path, 'utf8')
-  assertMarkers(afterGoalPreserved)
-  assert.equal(afterGoalPreserved.includes(customGoal), true)
-  assert.equal(afterGoalPreserved.endsWith(`\n\n${customState}`), true)
-  assert.doesNotMatch(afterGoalPreserved, /Outdated v1\.1 policy/)
+  assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true, spec: true }, updated: false })
+  assert.equal(await readFile(agentsPath, 'utf8'), after)
+  assert.equal(await readFile(specPath, 'utf8'), userSpec)
+  assert.equal((await stat(agentsPath, { bigint: true })).mtimeNs, beforeAgentsStat.mtimeNs)
+  assert.equal((await stat(specPath, { bigint: true })).mtimeNs, beforeSpecStat.mtimeNs)
 
-  await writeFile(path, `${policyStart}\nbroken\n`)
+  await writeFile(agentsPath, `${customPrefix}${policyStart}\n## Outdated policy\n${policyEnd}\n\n${customState}`)
+  assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true, spec: true }, updated: true })
+  assert.equal(await readFile(specPath, 'utf8'), userSpec)
+  assert.equal((await stat(specPath, { bigint: true })).mtimeNs, beforeSpecStat.mtimeNs)
+
+  await writeFile(agentsPath, `${policyStart}\nbroken\n`)
   await assert.rejects(upgradeProject(root), /markers/)
 })
