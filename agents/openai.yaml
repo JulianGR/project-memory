@@ -1,0 +1,7 @@
+interface:
+  display_name: "Project Memory"
+  short_description: "Automatic AGENTS.md goal anchor, drift check, and handoff"
+  default_prompt: "Use $project-memory to initialize or consolidate AGENTS.md for this project."
+
+policy:
+  allow_implicit_invocation: true

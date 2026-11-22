@@ -1,84 +1,68 @@
 # Project Memory
 
-Project Memory keeps a fast, simple Markdown session handoff in `AGENTS.md` so any AI session can resume right where the previous one left off—knowing what was done, **what was tried (what worked and what failed)**, and what decisions apply—without databases, servers, or external APIs.
+Lightweight Agent Skill for keeping an automatic, plain-Markdown goal anchor and session handoff in `AGENTS.md` across **any kind of project** (software, pentesting, research, finance, writing) - without databases, servers, hooks, or manual ceremonies.
 
-When `AGENTS.md` grows or you ask to consolidate it (`consolida AGENTS.md`), older milestones and deep topic details are archived into plain Markdown files under `.memory/` with one-line links in `AGENTS.md`, so startup stays light and nothing from weeks ago is lost. Cross-project user preferences can live optionally in `~/.project-memory/USER.md`.
+Every session resumes knowing:
+1. **What the real goal is (`goal` block - Read-Only for AI)** so the objective never dilutes across 100+ turns and overengineering gets caught early.
+2. **Where work stands (`state` block)** - exact next step, **what was tried (verified wins + failed dead ends and why)**, and standing decisions.
+3. **Past weeks' history (`.memory/`)** when `AGENTS.md` grows past ~250 lines or you ask to consolidate (`consolida AGENTS.md`), plus optional cross-project preferences in `~/.project-memory/USER.md`.
 
-In Codex, agents maintain `AGENTS.md` through instructions during normal work without hooks or forced continuations. Claude Code and Kimi retain their single `Stop` hook. Optional CLI commands require Node.js 20+ with zero runtime dependencies.
-
-## Install from this repository
-
-### Codex
+## Structure
 
 ```text
-codex plugin marketplace add "<repo-path>"
-codex plugin add project-memory@project-memory
+project-memory/
+|-- SKILL.md                    # Agent skill instructions
+|-- agents/openai.yaml          # UI metadata & implicit invocation policy
+|-- scripts/project-memory.mjs  # Atomic zero-dependency CLI (init, upgrade, status)
+|-- templates/AGENTS.md         # Managed policy + goal + state template
+`-- tests/                      # Node.js built-in test suite
 ```
 
-Verify with `codex plugin list` and start a new session. Codex registers no lifecycle hooks; maintenance happens during normal turns.
+## Install (Single Source of Truth in `~/.agents/skills`)
 
-### Claude Code
+Clone the repo and link it into `~/.agents/skills/project-memory` (shared automatically by Codex / ChatGPT Desktop, OpenRouter profiles, and OpenCode):
 
-```text
-claude plugin marketplace add "<repo-path>"
-claude plugin install project-memory@project-memory
+```powershell
+# Windows (PowerShell - no admin required)
+New-Item -ItemType Junction -Path "$HOME\.agents\skills\project-memory" -Target "<repo-path>"
 ```
 
-Restart the session after installation (Claude Code v2.1.277+ loads `AGENTS.md` natively).
-
-### Kimi Code CLI
-
-```text
-/plugins install <repo-path>
-/reload
+```sh
+# macOS / Linux
+ln -s "<repo-path>" "$HOME/.agents/skills/project-memory"
 ```
 
-## Simple 3-part Markdown model
+Or install directly via the `skills` CLI:
 
-1. **Active handoff (`AGENTS.md`, target ~150–250 lines)**:
-   - Loaded automatically at session start.
-   - Updated quietly on meaningful turns with:
-     - `Current handoff and next steps`: exact current state and immediate next action.
-     - `Tried: what worked and dead ends`: approaches tested, what worked, and **what failed + why** so future sessions never repeat dead ends.
-     - `Decisions, constraints, and validation`: accepted decisions with rationale and commands to test/verify.
-     - `Archive index`: one-line links to `.memory/*.md` files.
-2. **Episodic & deep archive (`.memory/`, created only on consolidation)**:
-   - When asked to consolidate `AGENTS.md` (or when `AGENTS.md` exceeds ~250 lines), the agent compacts `AGENTS.md` to active context and moves older weeks' history (`YYYY-MM` milestones, resolved investigations) or deep subsystem references into `.memory/history.md` or `.memory/<topic>.md`, linking them in `Archive index`.
-3. **Cross-project user memory (`~/.project-memory/USER.md`, optional)**:
-   - Read once per session if present. Written only when the user expresses durable workflow preferences or lessons that apply across all repositories.
-
-## Optional CLI commands
-
-Initialize `AGENTS.md` in a project (preserves existing instructions):
-
-```text
-node "<repo-path>/bin/project-memory.mjs" init --project "<project-path>"
+```sh
+npx skills add JulianGR/project-memory
 ```
 
-Upgrade an older `policy` block in an already-initialized `AGENTS.md` without touching instructions or `state`:
+## How It Works
 
-```text
-node "<repo-path>/bin/project-memory.mjs" upgrade --project "<project-path>"
+1. **Protected goal anchor (`goal` markers - `Read-Only` / `Propose-Only`)**:
+   - Holds `Objective`, `Out of scope / limits`, and `Done criteria`.
+   - Never edited by the AI during routine updates or consolidation.
+   - **Automatic drift check**: compares active work against `goal`. Cuts unrequested overengineering; if your direction genuinely evolved or uncovered a nuance, proposes a 1-2 line update and edits `goal` only after explicit approval.
+2. **Active handoff (`state` markers, ~150-250 lines)**:
+   - Updated quietly on meaningful turns with current state & next step, verified wins + failed dead ends (and why), accepted decisions, and validation checks.
+3. **Automatic episodic archive (`.memory/`)**:
+   - When `AGENTS.md` exceeds ~250 lines or you say `"consolida AGENTS.md"`, compacts `state` (leaving `goal` untouched) and moves older milestones/investigations into `.memory/*.md` with one-line links in `Archive index`.
+4. **Cross-project preferences (`~/.project-memory/USER.md`, optional)**:
+   - Read once per session if present; stores only durable rules that apply across all projects.
+
+## CLI Helpers (Node.js 20+, zero dependencies)
+
+```sh
+node scripts/project-memory.mjs init --project "<project-path>"
+node scripts/project-memory.mjs upgrade --project "<project-path>"
+node scripts/project-memory.mjs status --project "<project-path>"
 ```
 
-Inspect `AGENTS.md` status (`active`, `initialized`) without modifying files:
+## Tests
 
-```text
-node "<repo-path>/bin/project-memory.mjs" status --project "<project-path>"
-```
-
-## Host behavior
-
-| Host | Stop continuation |
-| --- | --- |
-| Codex | None; maintenance follows instructions within the normal turn |
-| Claude Code | `Stop` `additionalContext`, without reporting a hook error |
-| Kimi Code CLI | `permissionDecision: "deny"` with a review instruction |
-
-## Development checks
-
-```text
-node --test tests/*.test.mjs
+```sh
+npm test
 ```
 
 ## License

@@ -5,22 +5,21 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { initializeProject, isInitialized, projectStatus, upgradeProject } from '../lib/project-memory.mjs'
+import { initializeProject, isInitialized, projectStatus, upgradeProject } from '../scripts/project-memory.mjs'
 
 const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
-const cliPath = join(projectRoot, 'bin', 'project-memory.mjs')
-const markers = ['policy:start', 'policy:end', 'state:start', 'state:end'].map((name) => `<!-- project-memory:${name} -->`)
-const [policyStart, policyEnd, stateStart, stateEnd] = markers
-const silent = { code: 0, output: '', errors: '' }
+const cliPath = join(projectRoot, 'scripts', 'project-memory.mjs')
+const markers = ['policy:start', 'policy:end', 'goal:start', 'goal:end', 'state:start', 'state:end'].map((name) => `<!-- project-memory:${name} -->`)
+const [policyStart, policyEnd, goalStart, goalEnd, stateStart, stateEnd] = markers
 
-async function temporaryDirectory(t, prefix = 'agent-memory-project-') {
+async function temporaryDirectory(t, prefix = 'project-memory-') {
   const root = await mkdtemp(join(tmpdir(), prefix))
   assert.ok(resolve(root).toLowerCase().startsWith(`${resolve(tmpdir())}${sep}`.toLowerCase()))
   t.after(() => rm(root, { recursive: true, force: true }))
   return root
 }
 
-function runCli(args, { binary = cliPath, cwd = projectRoot, event, input, keepStdinOpen = false } = {}) {
+function runCli(args, { binary = cliPath, cwd = projectRoot, keepStdinOpen = false } = {}) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, [binary, ...args], { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
     let output = ''
@@ -41,7 +40,7 @@ function runCli(args, { binary = cliPath, cwd = projectRoot, event, input, keepS
       if (timedOut) reject(new Error(`CLI timed out: ${args.join(' ')}`))
       else resolveResult({ code, output, errors })
     })
-    if (!keepStdinOpen) child.stdin.end(input ?? JSON.stringify(event))
+    if (!keepStdinOpen) child.stdin.end()
   })
 }
 
@@ -57,28 +56,15 @@ function assertMarkers(content) {
   assert.deepEqual([...positions].sort((first, second) => first - second), positions)
 }
 
-function assertStop(result, host, label) {
-  const payload = jsonOutput(result, label)
-  const reason = payload.reason ?? payload.hookSpecificOutput?.additionalContext ?? payload.hookSpecificOutput?.permissionDecisionReason
-  assert.equal(typeof reason, 'string', label)
-  assert.match(reason, /AGENTS\.md/, label)
-  const expected = {
-    codex: { decision: 'block', reason },
-    claude: { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: reason } },
-    kimi: { hookSpecificOutput: { hookEventName: 'Stop', permissionDecision: 'deny', permissionDecisionReason: reason } }
-  }
-  assert.deepEqual(payload, expected[host], label)
-}
-
-async function installedBinary(t) {
-  const cacheRoot = await temporaryDirectory(t, 'agent-memory-cache-')
+async function copiedSkillBinary(t) {
+  const cacheRoot = await temporaryDirectory(t, 'project-memory-skill-')
   const installedRoot = join(cacheRoot, 'project-memory')
   await mkdir(installedRoot)
-  await Promise.all(['bin', 'lib', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
-  return join(installedRoot, 'bin', 'project-memory.mjs')
+  await Promise.all(['scripts', 'templates'].map((directory) => cp(join(projectRoot, directory), join(installedRoot, directory), { recursive: true })))
+  return join(installedRoot, 'scripts', 'project-memory.mjs')
 }
 
-test('initialization creates or preserves AGENTS.md and repeated initialization changes neither bytes nor mtime', async (t) => {
+test('initialization creates or preserves AGENTS.md with policy, goal, and state blocks and repeated initialization changes neither bytes nor mtime', async (t) => {
   for (const original of ['', 'Local instructions that must remain intact.\n']) {
     const root = await temporaryDirectory(t)
     const path = join(root, 'AGENTS.md')
@@ -122,8 +108,12 @@ test('only unique ordered complete markers identify managed memory; invalid mark
 
   const cases = [
     ['duplicate marker', valid.replace(stateEnd, `${stateEnd}\n${stateEnd}`)],
-    ['wrong order', `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`],
-    ['missing state end', `${policyStart}\n${policyEnd}\n${stateStart}\n`],
+    ['duplicate goal marker', valid.replace(goalEnd, `${goalEnd}\n${goalEnd}`)],
+    ['wrong order state before policy end', `${policyStart}\n${stateStart}\n${policyEnd}\n${stateEnd}\n`],
+    ['wrong order goal after state', `${policyStart}\n${policyEnd}\n${stateStart}\n${stateEnd}\n${goalStart}\n${goalEnd}\n`],
+    ['missing state end', `${policyStart}\n${policyEnd}\n${goalStart}\n${goalEnd}\n${stateStart}\n`],
+    ['missing goal end', `${policyStart}\n${policyEnd}\n${goalStart}\n${stateStart}\n${stateEnd}\n`],
+    ['unclosed marker tag', `${policyStart}\n${policyEnd}\n<!-- project-memory:goal:start\n${stateStart}\n${stateEnd}\n`],
     ['policy only', `${policyStart}\npartial\n${policyEnd}\n`],
     ['state only', `${stateStart}\npartial\n${stateEnd}\n`],
     ['missing policy end', `${policyStart}\npartial\n${stateStart}\npartial\n${stateEnd}\n`]
@@ -150,15 +140,15 @@ test('concurrent initialization writes one complete AGENTS.md document', async (
   assert.deepEqual(await readdir(root), ['AGENTS.md'])
 })
 
-test('optional init and status CLI require explicit targets, preserve files, and finish with stdin open from another cwd', async (t) => {
-  const launcherRoot = await temporaryDirectory(t, 'agent-memory-launcher-')
-  const cachedBinary = await installedBinary(t)
+test('CLI init and status require explicit --project, preserve files, and finish with stdin open from another cwd', async (t) => {
+  const launcherRoot = await temporaryDirectory(t, 'project-memory-launcher-')
+  const standaloneBinary = await copiedSkillBinary(t)
   const cases = [
     { binary: cliPath, original: '' },
-    { binary: cachedBinary, original: 'Keep these target instructions unchanged.\n' }
+    { binary: standaloneBinary, original: 'Keep these target instructions unchanged.\n' }
   ]
   for (const { binary, original } of cases) {
-    const targetRoot = await temporaryDirectory(t, 'agent-memory-target-')
+    const targetRoot = await temporaryDirectory(t, 'project-memory-target-')
     const notes = 'Keep this unrelated target note unchanged.\n'
     if (original) {
       await writeFile(join(targetRoot, 'AGENTS.md'), original)
@@ -177,7 +167,7 @@ test('optional init and status CLI require explicit targets, preserve files, and
     assert.deepEqual((await readdir(targetRoot)).sort(), original ? ['AGENTS.md', 'NOTES.md'] : ['AGENTS.md'])
   }
 
-  for (const command of ['init', 'status']) {
+  for (const command of ['init', 'status', 'upgrade']) {
     const result = await runCli([command], { cwd: launcherRoot, keepStdinOpen: true })
     assert.equal(result.code, 1, command)
     assert.match(result.errors, /--project/, command)
@@ -186,79 +176,7 @@ test('optional init and status CLI require explicit targets, preserve files, and
   assert.deepEqual(await readdir(launcherRoot), [])
 })
 
-test('Stop detects hosts for every active AGENTS.md and never writes it', async (t) => {
-  const cases = [
-    ['auto Codex', 'codex', [], { turn_id: 'turn-1' }],
-    ['auto Claude', 'claude', [], {}],
-    ['empty turn id', 'claude', [], { turn_id: '' }],
-    ['invalid turn id', 'claude', [], { turn_id: 42 }],
-    ['explicit Codex', 'codex', ['--host', 'codex'], {}],
-    ['explicit Claude', 'claude', ['--host', 'claude'], { turn_id: 'turn-1' }],
-    ['explicit Kimi', 'kimi', ['--host', 'kimi'], {}]
-  ]
-  const projects = [
-    { label: 'empty', instructions: '', initialized: false },
-    { label: 'ordinary', instructions: 'Ordinary project instructions.\n', initialized: false },
-    { label: 'partial', instructions: `${policyStart}\npartial instructions\n`, initialized: false },
-    { label: 'managed', instructions: null, initialized: true }
-  ]
-  for (const project of projects) {
-    const root = await temporaryDirectory(t)
-    const path = join(root, 'AGENTS.md')
-    if (project.initialized) await initializeProject(root)
-    else await writeFile(path, project.instructions)
-    assert.deepEqual(await projectStatus(root), { active: true, initialized: project.initialized }, project.label)
-    const knownTime = new Date('2000-01-02T03:04:05.000Z')
-    await utimes(path, knownTime, knownTime)
-    const before = await readFile(path)
-    const beforeStat = await stat(path, { bigint: true })
-    for (const [label, host, args, event] of cases) {
-      assertStop(await runCli(['stop', ...args], { event: { cwd: root, ...event } }), host, `${project.label}: ${label}`)
-    }
-    assert.deepEqual(await readFile(path), before, project.label)
-    assert.equal((await stat(path, { bigint: true })).mtimeNs, beforeStat.mtimeNs, project.label)
-  }
-})
-
-test('Stop silently ignores invalid events, unknown hosts, and projects without AGENTS.md', async (t) => {
-  const root = await temporaryDirectory(t)
-  const missing = await temporaryDirectory(t)
-  await initializeProject(root)
-  assert.deepEqual(await projectStatus(missing), { active: false, initialized: false })
-  const before = await readFile(join(root, 'AGENTS.md'))
-  const cases = [
-    { label: 'malformed JSON', input: '{' },
-    { label: 'invalid event object', input: '[]' },
-    { label: 'missing cwd', event: {} },
-    { label: 'empty cwd', event: { cwd: '' } },
-    { label: 'unknown host', args: ['stop', '--host', 'unknown'], event: { cwd: root } },
-    { label: 'missing AGENTS.md', event: { cwd: missing, turn_id: 'turn-1' } }
-  ]
-  for (const { label, args = ['stop'], ...options } of cases) {
-    assert.deepEqual(await runCli(args, options), silent, label)
-  }
-  assert.deepEqual(await readFile(join(root, 'AGENTS.md')), before)
-  assert.deepEqual(await readdir(root), ['AGENTS.md'])
-  assert.deepEqual(await readdir(missing), [])
-})
-
-test('Stop guards prevent nested reviews and fail open for invalid guard values', async (t) => {
-  const root = await temporaryDirectory(t)
-  await initializeProject(root)
-  for (const host of ['codex', 'kimi']) {
-    const args = host === 'codex' ? ['stop'] : ['stop', '--host', host]
-    for (const active of [true, 'true', 0, null, []]) {
-      const event = { cwd: root, turn_id: 'turn-1', stop_hook_active: active }
-      assert.deepEqual(await runCli(args, { event }), silent, `${host}: ${JSON.stringify(active)}`)
-    }
-    for (const active of [false, undefined]) {
-      const event = { cwd: root, turn_id: 'turn-1', stop_hook_active: active }
-      assertStop(await runCli(args, { event }), host, `${host}: ${active}`)
-    }
-  }
-})
-
-test('upgrade updates only outdated policy markers while preserving custom instructions, state, and idempotence', async (t) => {
+test('upgrade migrates legacy 4-marker docs to include goal block and preserves user goal, custom instructions, state, and idempotence', async (t) => {
   const missing = await temporaryDirectory(t)
   assert.deepEqual(await upgradeProject(missing), { existing: { agents: false, initialized: false }, updated: false })
   assert.deepEqual(await readdir(missing), [])
@@ -275,6 +193,7 @@ test('upgrade updates only outdated policy markers while preserving custom instr
   const customState = `${stateStart}\n## Project memory\n\n### Custom preserved state\n- Tried X: failed because Y.\n${stateEnd}\n`
   const legacyDoc = `${customPrefix}${policyStart}\n## Old policy\nDo not create a second memory file.\n${policyEnd}\n\n${customState}`
   await writeFile(path, legacyDoc)
+  assert.equal(await isInitialized(root), true)
 
   const upgraded = jsonOutput(await runCli(['upgrade', '--project', root], { keepStdinOpen: true }))
   assert.deepEqual(upgraded, { existing: { agents: true, initialized: true }, updated: true })
@@ -284,6 +203,7 @@ test('upgrade updates only outdated policy markers while preserving custom instr
   assert.equal(after.startsWith(customPrefix), true)
   assert.equal(after.endsWith(`\n\n${customState}`), true)
   assert.match(after, /\.memory\//)
+  assert.match(after, /Protected goal/)
   assert.doesNotMatch(after, /Do not create a second memory file/)
 
   const knownTime = new Date('2000-01-02T03:04:05.000Z')
@@ -292,6 +212,16 @@ test('upgrade updates only outdated policy markers while preserving custom instr
   assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true }, updated: false })
   assert.equal(await readFile(path, 'utf8'), after)
   assert.equal((await stat(path, { bigint: true })).mtimeNs, beforeStat.mtimeNs)
+
+  const customGoal = `${goalStart}\n## Project goal\n- **Objective**: Ship zero-dependency CLI.\n- **Out of scope / limits**: No servers or SQLite.\n- **Done criteria**: All node:test suites pass.\n${goalEnd}`
+  const withUserGoal = `${customPrefix}${policyStart}\n## Outdated v1.1 policy\n${policyEnd}\n\n${customGoal}\n\n${customState}`
+  await writeFile(path, withUserGoal)
+  assert.deepEqual(await upgradeProject(root), { existing: { agents: true, initialized: true }, updated: true })
+  const afterGoalPreserved = await readFile(path, 'utf8')
+  assertMarkers(afterGoalPreserved)
+  assert.equal(afterGoalPreserved.includes(customGoal), true)
+  assert.equal(afterGoalPreserved.endsWith(`\n\n${customState}`), true)
+  assert.doesNotMatch(afterGoalPreserved, /Outdated v1\.1 policy/)
 
   await writeFile(path, `${policyStart}\nbroken\n`)
   await assert.rejects(upgradeProject(root), /markers/)
